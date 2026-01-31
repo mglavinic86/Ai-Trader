@@ -35,6 +35,7 @@
 | Faza 4.7: SMC Knowledge Integration | DONE | **56 PDF-ova, 7 knowledge, 3 skills** |
 | Faza 4.8: Security Fixes | DONE | **Weekly drawdown, auto-reset, bypass removal** |
 | Faza 4.9: Remote Access | DONE | **Tailscale VPN, auto-start, mobile access** |
+| Faza 4.10: Skill Buttons + BTC | DONE | **Vizualni gumbi, BTC/USD kripto** |
 | Faza 4: Production | IN PROGRESS | Live testing |
 
 **Ukupni napredak: ~100%**
@@ -380,6 +381,22 @@ Kada korisnik pokrene novu sesiju, nastavi s:
 - Auto-start skripta za Windows Startup
 - `start_dashboard.bat` + `start_dashboard_hidden.vbs`
 
+### Session 13 (2026-01-31)
+- **Skill Buttons ZAVRSENI**
+- Nova komponenta: `components/skill_buttons.py`
+- 6 vizualnih gumba: SMC, FVG, Killzone, Scalping, Swing, News
+- Dashboard: Trading Strategies sekcija s karticama
+- Chat: Skill gumbi u sidebaru s pair selectorom
+- **BTC/USD podrska ZAVRSENA**
+- BTCUSD simbol mapiran (bez .pro sufiksa)
+- Pip value = 1.0 za kripto
+- Spread kalkulacija prilagodena
+- Dostupno u Chat, Analysis, Backtest
+- **Tailscale Funnel** za javni pristup
+- Public URL: `https://mgpc.taild09bbd.ts.net/`
+- **Git repozitorij inicijaliziran**
+- Initial commit: 171 fajlova, 987k linija
+
 ---
 
 ## Dashboard Stranice
@@ -416,4 +433,4 @@ Kada korisnik pokrene novu sesiju, nastavi s:
 
 ---
 
-*Zadnje azuriranje: 2026-01-31 | Session 12 - Remote Access DONE*
+*Zadnje azuriranje: 2026-01-31 | Session 13 - Skill Buttons + BTC/USD DONE*

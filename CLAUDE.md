@@ -27,6 +27,7 @@ cat CLAUDE_CONTEXT.md   # Procitaj kontekst
 | Faza 4.7: SMC Knowledge Integration | DONE |
 | Faza 4.8: Security Fixes | DONE |
 | Faza 4.9: Remote Access | DONE |
+| Faza 4.10: Skill Buttons + BTC | DONE |
 | Faza 4: Production | IN PROGRESS (100%) |
 
 ## VAZNO: MT5 Integracija
@@ -58,11 +59,11 @@ Dashboard se automatski pokrece kad se Windows upali.
 - `Dev/start_dashboard.bat` - Batch skripta
 - `Dev/start_dashboard_hidden.vbs` - Pokrece bez CMD prozora
 
-### Remote Access (Tailscale)
-Pristup s mobitela/tableta preko privatne VPN mreze:
+### Remote Access (Tailscale Funnel)
+Javni pristup dashboardu:
+- **Public URL:** `https://mgpc.taild09bbd.ts.net/`
 - **PC IP:** `100.106.24.4`
-- **Mobile URL:** `http://100.106.24.4:8501`
-- Instaliran Tailscale na PC i Samsung S24
+- **Pokreni Funnel:** `& "C:\Program Files\Tailscale\tailscale.exe" funnel 8502`
 - Zero-config, end-to-end encrypted (WireGuard)
 
 ## Kljucni fajlovi
@@ -146,6 +147,31 @@ settings/skills/
 - Primjer analize s FVG/OB/CISD
 - Session i Liquidity preferences
 
+## NOVO: Skill Buttons + BTC/USD (Session 13)
+
+**Vizualni skill gumbi i kripto trading!**
+
+### Skill Buttons
+Dashboard i Chat sada imaju vizualne gumbe za strategije:
+- **SMC** - Smart Money Concepts
+- **FVG** - Fair Value Gap
+- **Killzone** - Session trading
+- **Scalping** - Quick M5/M15 trades
+- **Swing** - Multi-day positions
+- **News** - Event-driven strategies
+
+### BTC/USD podrska
+```
+Symbol: BTCUSD (na OANDA-TMS)
+Pip value: 1.0 (cijeli dolar)
+Dostupno u: Chat, Analysis, Backtest
+```
+
+### Novi fajlovi
+```
+Dev/components/skill_buttons.py  # Reusable skill komponenta
+```
+
 ## NOVO: Security Fixes (Session 11)
 
 **6 kriticnih sigurnosnih bugova popravljeno!**
@@ -191,8 +217,9 @@ Dev/
 - ~~Risk Validation Gate~~ DONE
 - ~~SMC Knowledge Integration~~ DONE
 - ~~Security Fixes~~ DONE
+- ~~Skill Buttons + BTC~~ DONE
 - Live demo testing
 
 ---
 
-*Zadnje azuriranje: 2026-01-31 | Session 12 - Remote Access DONE*
+*Zadnje azuriranje: 2026-01-31 | Session 13 - Skill Buttons + BTC/USD DONE*
