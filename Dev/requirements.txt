@@ -1,0 +1,35 @@
+# AI Trader - Python Dependencies
+# Install: pip install -r requirements.txt
+
+# MetaTrader 5 API
+MetaTrader5>=5.0.45
+
+# HTTP Client (kept for potential web API needs)
+httpx>=0.27.0
+
+# Data Processing
+pandas>=2.2.0
+
+# Technical Analysis
+pandas-ta>=0.3.14b
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Logging
+loguru>=0.7.2
+
+# Terminal UI
+rich>=13.7.0
+prompt-toolkit>=3.0.43
+
+# Anthropic API (for AI features)
+anthropic>=0.40.0
+
+# Web Dashboard
+streamlit>=1.32.0
+plotly>=5.18.0
+
+# Type Hints (optional, for development)
+# mypy>=1.8.0
+# types-requests>=2.31.0

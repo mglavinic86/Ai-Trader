@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /b /s \"C:\\\\Users\\\\mglav\\\\Projects\\\\AI Trader\\\\brainstorming\")",
+      "WebFetch(domain:github.com)",
+      "Bash(dir \"C:\\\\Program Files\\\\OANDA*\" /b)",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\OANDA*\" /b)",
+      "Skill(hybrid-orchestrator)",
+      "Bash(codex:*)",
+      "Bash(dir:*)",
+      "Bash(\"C:\\\\Users\\\\mglav\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\\\\codex\\\\vendor\\\\x86_64-pc-windows-msvc\\\\codex\\\\codex.exe\" --version)",
+      "Bash(\"C:\\\\Users\\\\mglav\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\\\\codex\\\\vendor\\\\x86_64-pc-windows-msvc\\\\codex\\\\codex.exe\" exec \"Analyze this AI Trader project: describe the architecture, tech stack, key components, and current status. Focus on the directory structure and main files.\")",
+      "Bash(\"C:\\\\Users\\\\mglav\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\\\\codex\\\\vendor\\\\x86_64-pc-windows-msvc\\\\codex\\\\codex.exe\" exec --skip-git-repo-check \"Analyze this AI Trader project: describe the architecture, tech stack, key components, and current status. Focus on the directory structure and main files.\")",
+      "Bash(\"C:\\\\Users\\\\mglav\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\\\\codex\\\\vendor\\\\x86_64-pc-windows-msvc\\\\codex\\\\codex.exe\" exec --skip-git-repo-check \"Drill into src/trading/ directory: analyze each file, describe the classes/functions, explain the call flow between components, and identify the main trading logic. Show how MT5 client integrates with the rest of the system.\")",
+      "Bash(find:*)",
+      "Bash(powershell -Command \"Get-ChildItem -Recurse -Path src | Where-Object { $_Extension -eq ''.py'' } | Select-Object -ExpandProperty FullName\")",
+      "Bash(wc:*)"
+    ]
+  }
+}
