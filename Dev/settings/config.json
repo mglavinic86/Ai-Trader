@@ -7,28 +7,29 @@
     "show_timestamps": true,
     "confirm_trades": true
   },
-
   "ai": {
-    "model": "claude-opus-4-5-20250101",
+    "model": "claude-opus-4-5-20251101",
     "temperature": 0.3,
     "max_tokens": 4096,
     "use_adversarial": true,
     "use_rag": true,
     "use_sentiment": true
   },
-
   "analysis": {
-    "default_timeframe": "H4",
-    "indicators": ["EMA20", "EMA50", "RSI14", "ATR14"],
-    "min_rr_ratio": 1.5,
+    "default_timeframe": "M15",
+    "indicators": [
+      "EMA20",
+      "EMA50",
+      "RSI14",
+      "ATR14"
+    ],
+    "min_rr_ratio": 2.0,
     "lookback_candles": 100
   },
-
   "notifications": {
     "sound_on_signal": false,
     "log_all_analysis": true
   },
-
   "skills": {
     "enabled": [
       "technical_analysis",

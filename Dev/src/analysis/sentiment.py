@@ -1,14 +1,20 @@
 """
 Sentiment Analysis - Price action and momentum-based sentiment.
 
+Phase 2 Enhancement: Optional external sentiment integration
+from news, VIX, and economic calendar.
+
 Usage:
     from src.analysis.sentiment import SentimentAnalyzer
 
     analyzer = SentimentAnalyzer()
     result = analyzer.analyze(candles, technical_analysis)
+
+    # With external sentiment
+    result = analyzer.analyze(candles, technical_analysis, instrument="EUR_USD", use_external=True)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
 
@@ -32,6 +38,12 @@ class SentimentResult:
     is_trending: bool
     trend_direction: str  # UP, DOWN, FLAT
 
+    # External sentiment (Phase 2 Enhancement)
+    external_score: float = 0.0
+    external_confidence: float = 0.0
+    external_reasoning: str = ""
+    has_external: bool = False
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -41,7 +53,11 @@ class SentimentResult:
             "momentum_score": self.momentum_score,
             "volatility_score": self.volatility_score,
             "is_trending": self.is_trending,
-            "trend_direction": self.trend_direction
+            "trend_direction": self.trend_direction,
+            "external_score": self.external_score,
+            "external_confidence": self.external_confidence,
+            "external_reasoning": self.external_reasoning,
+            "has_external": self.has_external,
         }
 
     def format_summary(self) -> str:
@@ -64,14 +80,33 @@ Trending: {'Yes' if self.is_trending else 'No'} ({self.trend_direction})
 class SentimentAnalyzer:
     """Analyzes market sentiment from price action."""
 
-    def __init__(self):
-        """Initialize analyzer."""
-        pass
+    def __init__(self, use_external: bool = False):
+        """
+        Initialize analyzer.
+
+        Args:
+            use_external: Whether to include external sentiment by default
+        """
+        self._use_external = use_external
+        self._aggregator = None
+
+    def _get_aggregator(self):
+        """Lazy load sentiment aggregator."""
+        if self._aggregator is None:
+            try:
+                from src.sentiment.aggregator import SentimentAggregator
+                self._aggregator = SentimentAggregator()
+            except Exception as e:
+                logger.warning(f"Could not load SentimentAggregator: {e}")
+                return None
+        return self._aggregator
 
     def analyze(
         self,
         candles: list[dict],
-        technical: Optional[TechnicalAnalysis] = None
+        technical: Optional[TechnicalAnalysis] = None,
+        instrument: str = None,
+        use_external: bool = None
     ) -> SentimentResult:
         """
         Analyze sentiment from candle data.
@@ -79,6 +114,8 @@ class SentimentAnalyzer:
         Args:
             candles: OHLCV candle data
             technical: Optional pre-calculated technical analysis
+            instrument: Currency pair (required for external sentiment)
+            use_external: Override default external sentiment usage
 
         Returns:
             SentimentResult
@@ -94,6 +131,23 @@ class SentimentAnalyzer:
         # Price action: 50%, Momentum: 35%, Volatility: 15%
         combined = (price_action * 0.50) + (momentum * 0.35) + (volatility * 0.15)
 
+        # External sentiment (Phase 2 Enhancement)
+        external_score = 0.0
+        external_confidence = 0.0
+        external_reasoning = ""
+        has_external = False
+
+        should_use_external = use_external if use_external is not None else self._use_external
+
+        if should_use_external and instrument:
+            external_score, external_confidence, external_reasoning = self._get_external_sentiment(
+                instrument, combined
+            )
+            if external_confidence > 0:
+                has_external = True
+                # Blend external with internal (40% external, 60% internal)
+                combined = (combined * 0.60) + (external_score * 0.40)
+
         # Determine label
         label = self._score_to_label(combined)
 
@@ -107,8 +161,41 @@ class SentimentAnalyzer:
             momentum_score=round(momentum, 2),
             volatility_score=round(volatility, 2),
             is_trending=is_trending,
-            trend_direction=trend_dir
+            trend_direction=trend_dir,
+            external_score=round(external_score, 2),
+            external_confidence=round(external_confidence, 2),
+            external_reasoning=external_reasoning,
+            has_external=has_external,
         )
+
+    def _get_external_sentiment(
+        self,
+        instrument: str,
+        price_action_sentiment: float
+    ) -> tuple[float, float, str]:
+        """
+        Get external sentiment from aggregator.
+
+        Args:
+            instrument: Currency pair
+            price_action_sentiment: Current price action sentiment
+
+        Returns:
+            (score, confidence, reasoning)
+        """
+        aggregator = self._get_aggregator()
+        if aggregator is None:
+            return 0.0, 0.0, ""
+
+        try:
+            result = aggregator.get_combined_sentiment(
+                instrument,
+                price_action_sentiment=price_action_sentiment
+            )
+            return result.score, result.confidence, result.claude_reasoning
+        except Exception as e:
+            logger.warning(f"External sentiment failed for {instrument}: {e}")
+            return 0.0, 0.0, ""
 
     def _price_action_sentiment(self, df: pd.DataFrame) -> float:
         """

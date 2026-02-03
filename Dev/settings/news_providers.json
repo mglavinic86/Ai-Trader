@@ -1,0 +1,33 @@
+{
+  "providers": {
+    "finnhub": {
+      "enabled": true,
+      "api_key": "",
+      "priority": 1
+    },
+    "fmp": {
+      "enabled": true,
+      "api_key": "",
+      "priority": 2
+    },
+    "forexfactory": {
+      "enabled": true,
+      "priority": 3
+    },
+    "recurring": {
+      "enabled": true,
+      "priority": 10
+    },
+    "mql5": {
+      "enabled": false,
+      "priority": 4
+    },
+    "investingcom": {
+      "enabled": false,
+      "priority": 5
+    }
+  },
+  "refresh_interval_minutes": 60,
+  "days_ahead": 7,
+  "notes": "API keys needed: Finnhub (https://finnhub.io), FMP (https://financialmodelingprep.com). Recurring provider works without API key as fallback."
+}

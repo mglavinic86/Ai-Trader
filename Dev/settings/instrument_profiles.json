@@ -1,0 +1,61 @@
+{
+  "default": {
+    "max_spread_pips": 2.5,
+    "min_atr_pips": 5,
+    "sessions": ["07-16", "12-21"],
+    "allow_weekends": false,
+    "killzones": ["LONDON_OPEN", "NY_OPEN", "LONDON_CLOSE"]
+  },
+  "EUR_USD": {
+    "max_spread_pips": 1.5,
+    "min_atr_pips": 4,
+    "sessions": ["00-24"]
+  },
+  "GBP_USD": {
+    "max_spread_pips": 2.0,
+    "min_atr_pips": 5,
+    "sessions": ["00-24"]
+  },
+  "USD_JPY": {
+    "max_spread_pips": 1.8,
+    "min_atr_pips": 4,
+    "sessions": ["00-24"]
+  },
+  "USD_CHF": {
+    "max_spread_pips": 2.0,
+    "min_atr_pips": 4,
+    "sessions": ["07-17", "12-21"]
+  },
+  "AUD_USD": {
+    "max_spread_pips": 2.0,
+    "min_atr_pips": 4,
+    "sessions": ["00-08", "07-17"]
+  },
+  "EUR_GBP": {
+    "max_spread_pips": 2.0,
+    "min_atr_pips": 4,
+    "sessions": ["00-24"]
+  },
+  "EUR_JPY": {
+    "max_spread_pips": 3.0,
+    "min_atr_pips": 5,
+    "sessions": ["00-24"]
+  },
+  "USD_CAD": {
+    "max_spread_pips": 2.5,
+    "min_atr_pips": 5,
+    "sessions": ["12-21"]
+  },
+  "BTC_USD": {
+    "max_spread_pips": 50,
+    "min_atr_pips": 50,
+    "sessions": [],
+    "allow_weekends": true
+  },
+  "XAU_USD": {
+    "max_spread_pips": 30,
+    "min_atr_pips": 100,
+    "sessions": ["07-17", "12-21"],
+    "allow_weekends": false
+  }
+}

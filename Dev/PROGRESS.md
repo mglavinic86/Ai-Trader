@@ -342,6 +342,31 @@ Otvara browser na `http://localhost:8501`
 
 ---
 
+## Faza 6.1: News API Integration - COMPLETE (Session 23)
+
+### Sto je napravljeno
+- [x] News Provider System (`src/analysis/news_providers.py`)
+- [x] Multi-provider arhitektura (Finnhub, FMP, ForexFactory, Recurring)
+- [x] Recurring Provider - auto-generira high-impact evente bez API ključa
+- [x] Settings UI - News API tab za konfiguraciju
+- [x] NewsFilter integracija - async refresh, status tracking
+
+### Novi fajlovi
+| Fajl | Opis |
+|------|------|
+| `src/analysis/news_providers.py` | Provider sustav s 5 providera |
+| `settings/news_providers.json` | Provider konfiguracija |
+
+### Dostupni provideri
+| Provider | API Key | Prioritet |
+|----------|---------|-----------|
+| Finnhub | Potreban (besplatan) | 1 |
+| FMP | Potreban (besplatan) | 2 |
+| ForexFactory | Potreban | 3 |
+| Recurring | NE TREBA | 10 (fallback) |
+
+---
+
 ## Faza 4: Production (SLJEDECE)
 
 - [x] Backtesting module
@@ -351,6 +376,7 @@ Otvara browser na `http://localhost:8501`
 - [x] Documentation (README.md)
 - [x] Error monitoring
 - [x] SMC Knowledge Integration
+- [x] News API Integration (Session 23)
 - [ ] Live testing na demo
 
 ---
@@ -937,4 +963,439 @@ print('PASS')
 
 ---
 
-*Zadnje azuriranje: 2026-01-31 | Session 11 - Security Fixes COMPLETE*
+---
+
+### Session 12-13 (2026-01-31)
+**Ostvareno:**
+- Remote Access (Tailscale VPN)
+- Skill Buttons + BTC/USD podrska
+- Tailscale Funnel za javni pristup
+- Git repozitorij inicijaliziran
+
+---
+
+### Session 14 (2026-02-02)
+**Ostvareno:**
+- **FULL AUTO TRADING IMPLEMENTIRAN**
+- Potpuno automatizirani scalping bot
+
+**Novi fajlovi (8):**
+| Fajl | Svrha |
+|------|-------|
+| `src/core/auto_config.py` | AutoTradingConfig dataclass s hard limitima |
+| `src/trading/auto_scanner.py` | MarketScanner - skenira 8 instrumenata |
+| `src/trading/auto_executor.py` | AutoExecutor - izvrsava tradove automatski |
+| `src/trading/emergency.py` | EmergencyController - STOP ALL gumb |
+| `src/services/auto_trading_service.py` | Glavni async loop |
+| `src/strategies/scalping.py` | Scalping pattern detection |
+| `settings/auto_trading.json` | Konfiguracija auto-tradinga |
+| `pages/13_AutoTrading.py` | UI Control Panel |
+
+**Modificirani fajlovi (4):**
+- `src/trading/risk_manager.py` - loss streak, cooldown mehanizam
+- `src/utils/database.py` - tablice: scanner_stats, cooldown_log, auto_signals
+- `pages/1_Dashboard.py` - auto-trading status indicator
+- `run_auto_trading.py` - background runner skripta
+
+**Arhitektura:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AUTO-TRADING SERVICE                      │
+├─────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
+│  │ AUTO-SCANNER │───>│ AUTO-EXECUTOR│───>│   MT5 API    │  │
+│  └──────────────┘    └──────────────┘    └──────────────┘  │
+│          │                  │                               │
+│          v                  v                               │
+│  ┌──────────────┐    ┌──────────────┐                      │
+│  │ RISK MANAGER │    │  EMERGENCY   │                      │
+│  │ + Cooldown   │    │  CONTROLLER  │                      │
+│  └──────────────┘    └──────────────┘                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Hard Limits (nikad se ne mogu zaobici):**
+- Max risk per trade: 3%
+- Max daily drawdown: 5%
+- Max weekly drawdown: 10%
+- Max positions: 10
+- Min confidence: 50%
+
+**Cooldown mehanizam:**
+- 3 gubitka u nizu = 30 min pauza
+- Reset nakon pobjede
+- Sprecava emotionalno prekomjerno tradanje
+
+**Testiranje:**
+- Svi moduli se importaju uspjesno
+- Scanner skenira 8 instrumenata
+- **PRVI AUTO TRADE USPJESNO IZVRSHEN:**
+  - USD/JPY LONG
+  - 6000 units
+  - Order #136294630
+  - Sustav AKTIVNO RADI
+
+**Pokretanje:**
+```bash
+cd Dev
+
+# Opcija 1: Web Dashboard
+python -m streamlit run dashboard.py
+# Idi na stranicu AutoTrading (13)
+
+# Opcija 2: Background servis
+python run_auto_trading.py
+```
+
+---
+
+## Faza 5: Full Auto Trading - COMPLETE (Session 14)
+
+### Cilj
+Transformirati semi-manual sustav u potpuno automatizirani scalping bot koji:
+- Sam skenira trzista za prilike
+- Sam otvara tradove bez korisnickog odobrenja
+- Cilja 20-50+ kratkih tradova dnevno
+- Koristi 1% rizik po tradu
+- Ima jednostavan UI za kontrolu
+
+### Implementacija
+
+**Scanner (auto_scanner.py):**
+- Skenira konfigurirane instrumente svakih 30s
+- Koristi Technical + Sentiment + Adversarial analizu
+- Generira TradingSignal kad je confidence >= threshold
+- Provjerava scalping pravila (spread, ATR, R:R)
+
+**Executor (auto_executor.py):**
+- Prima signale od Scannera
+- Validira protiv risk limita
+- Izvrsava trade preko OrderManager
+- Track-a win/loss streak za cooldown
+
+**Emergency (emergency.py):**
+- Thread-safe singleton controller
+- STOP ALL funkcionalnost
+- Automatski zatvara pozicije ako triggerirano
+- Reset zahtijeva potvrdu "CONFIRM_RESET"
+
+**Service (auto_trading_service.py):**
+- Glavni async loop
+- Koordinira Scanner + Executor
+- Status tracking i callbacks
+- Enable/disable toggle
+
+**Config (auto_config.py):**
+- Dataclass s validacijom
+- Hard limits koji se NE MOGU zaobici
+- Konfigurabilan limiti unutar hard limitima
+- Scalping i cooldown settings
+
+### Status
+**SUSTAV JE AKTIVAN I TRGUJE AUTOMATSKI!**
+
+---
+
+### Session 15 (2026-02-02)
+**Ostvareno:**
+- **AI VISIBILITY DASHBOARD OVERHAUL**
+- Kompletna vidljivost u AI razmisljanje i odluke
+
+**Nova funkcionalnost:**
+
+| Feature | Opis |
+|---------|------|
+| **Activity Log** | Nova tablica `activity_log` u bazi za pracenje svih AI aktivnosti |
+| **AI Thinking Panel** | Live view sto AI trenutno radi (scanning, analyzing, deciding) |
+| **Decision Trail** | Detaljan breakdown analize po instrumentu |
+| **Bull/Bear Case** | AI objasnjava zasto je signal prihvacen/odbijen |
+| **Source Indicator** | AUTO vs MANUAL oznaka na pozicijama |
+| **Service Control** | START/STOP SERVICE buttoni u dashboardu |
+
+**Activity Types:**
+- `SCAN_START` / `SCAN_COMPLETE` - pocetak/kraj scan ciklusa
+- `ANALYZING` - analiza pojedinacnog instrumenta
+- `SIGNAL_GENERATED` - signal prolazi threshold
+- `SIGNAL_REJECTED` - signal odbijen (s razlogom)
+- `TRADE_EXECUTED` - trade otvoren
+- `TRADE_SKIPPED` - trade preskocen (s razlogom)
+- `COOLDOWN_START` / `COOLDOWN_END` - cooldown period
+- `ERROR` - greska u sustavu
+
+**Modificirani fajlovi:**
+
+| Fajl | Promjena |
+|------|----------|
+| `src/utils/database.py` | Nova `activity_log` tablica + metode |
+| `src/trading/auto_scanner.py` | Detaljno logging svake analize |
+| `src/trading/auto_executor.py` | Logging execution/skip odluka |
+| `src/analysis/confidence.py` | Dodani `bull_case` i `bear_case` atributi |
+| `pages/1_Dashboard.py` | AI Activity Feed sekcija |
+| `pages/13_AutoTrading.py` | AI Thinking tab, Decision Trail, Service Control |
+| `pages/4_Positions.py` | AUTO/MANUAL indikator, AI reasoning |
+| `src/services/auto_trading_service.py` | Stop signal file support |
+
+**Bug fixes:**
+- Save Configuration button sada radi (dodani `key` parametri na slidere)
+- Maknuti GBP_JPY i BTC_USD (nisu dostupni na MT5)
+- ConfidenceResult ima bull_case/bear_case za prikaz reasoning-a
+- Service reload config svaki scan cycle
+
+**Dashboard sada prikazuje:**
+- Real-time AI aktivnost (sto skenira, analizira)
+- Razlog zasto je signal prihvacen/odbijen
+- Technical/Sentiment/Adversarial scoreove
+- Bull/Bear case objasnjenja
+- Koje pozicije su AUTO vs MANUAL
+
+**Testiranje:**
+- Service uspjesno otvorio USD_JPY LONG trade
+- Svi instrumenti se analiziraju s detaljnim logging-om
+- Activity log prikazuje kompletnu povijest odluka
+
+---
+
+## Faza 5.1: AI Visibility - COMPLETE (Session 15)
+
+### Cilj
+Omoguciti korisniku potpunu vidljivost u AI razmisljanje:
+- Vidjeti sto AI trenutno radi
+- Razumjeti zasto je trade otvoren ili nije
+- Pratiti svaku analizu u realnom vremenu
+
+### Implementacija
+
+**Database (`activity_log` tablica):**
+```sql
+CREATE TABLE activity_log (
+    id INTEGER PRIMARY KEY,
+    timestamp TEXT,
+    activity_type TEXT,        -- SCAN_START, ANALYZING, etc.
+    instrument TEXT,
+    direction TEXT,
+    technical_score INTEGER,
+    sentiment_score REAL,
+    adversarial_score REAL,
+    confidence INTEGER,
+    decision TEXT,             -- SIGNAL, SKIP, EXECUTE
+    reasoning TEXT,            -- Human-readable explanation
+    details TEXT,              -- JSON with full data
+    duration_ms INTEGER,
+    signal_id INTEGER,
+    trade_id TEXT
+)
+```
+
+**ConfidenceResult (bull_case/bear_case):**
+```python
+@dataclass
+class ConfidenceResult:
+    ...
+    bull_case: str = ""  # "Strong technical setup (84%); Bullish trend"
+    bear_case: str = ""  # "RSI overbought (75); Adversarial warning (-10)"
+```
+
+**Dashboard Integration:**
+- `render_ai_activity_feed()` - zadnjih N aktivnosti
+- `render_ai_thinking_panel()` - live view s detaljima
+- `render_decision_trail()` - grupiran prikaz po instrumentu
+- `get_trade_source()` - AUTO vs MANUAL detekcija
+
+### Status
+**KOMPLETNA VIDLJIVOST U AI ODLUKE!**
+
+---
+
+### Session 16 (2026-02-02)
+**Ostvareno:**
+- **LEARNING ENGINE INTEGRATION**
+- Learning engine sada aktivno utjece na trading odluke
+
+**Learning Engine Changes:**
+| Promjena | Prije | Poslije |
+|----------|-------|---------|
+| MIN_TRADES_FOR_CRITICAL | 1 | 5 |
+| MIN_TRADES_FOR_PATTERN | 2 | 3 |
+| Integration | Ne koristi se | Aktivan u auto_scanner |
+
+**Kako radi:**
+```
+Signal → Confidence → Learning Engine → Adjusted Confidence → Decision
+                           ↓
+              Check pattern_stats for instrument/direction
+              Apply confidence adjustment (-25 to +15)
+              Block if should_trade = False (5+ losses)
+```
+
+**Bug Fixes (6):**
+
+| Bug | Fix |
+|-----|-----|
+| UNIQUE constraint failed | `update_trade_source()` umjesto duplicate `log_trade()` |
+| Service state STOPPED | Dashboard sada provjerava `activity_log` |
+| Signals not logged | Dodano `log_auto_signal()` u scanner |
+| Skip reason missing | Dodano `update_auto_signal_result()` |
+| Duplicate positions | Provjera MT5 + DB prije otvaranja |
+| NaN values in trades | Sinkronizacija s MT5 history |
+
+**Novi kod:**
+
+| Fajl | Promjena |
+|------|----------|
+| `src/trading/auto_scanner.py` | +LearningEngine integration, confidence adjustment |
+| `src/trading/auto_executor.py` | +DB position check, update_trade_source |
+| `src/utils/database.py` | +update_trade_source(), +update_auto_signal_result() |
+| `src/services/auto_trading_service.py` | +Signal result tracking |
+| `src/analysis/learning_engine.py` | Adjusted MIN_TRADES thresholds |
+| `pages/13_AutoTrading.py` | Service state from activity_log |
+
+**Config promjene:**
+- Uklonjeni: GBP_JPY, XAU_USD (nisu dostupni na MT5)
+- Ostalo: EUR_USD, GBP_USD, USD_JPY, AUD_USD, EUR_GBP, EUR_JPY
+
+**Pattern Stats:**
+- USD_JPY: 1W/2L (33% win rate)
+- EUR_USD: 0W/1L (0% win rate)
+
+**Testiranje:**
+- Learning engine blokira instrumente s 5+ lossova
+- Confidence se adjustira na temelju pattern historije
+- Dashboard prikazuje ispravan service state
+- Skip reasons se logiraju u auto_signals
+
+---
+
+## Faza 5.2: Learning Loop Integration - COMPLETE (Session 16)
+
+### Cilj
+Aktivirati learning loop - sustav uci iz proslih tradeova i primjenjuje znanje na nove odluke.
+
+### Implementacija
+
+**LearningEngine u auto_scanner.py:**
+```python
+# Nakon calculate confidence
+learning_insights = self.learning_engine.get_insights_for_trade(
+    instrument, direction, context
+)
+
+# Adjust confidence
+adjusted_confidence = original_confidence + learning_insights.confidence_adjustment
+
+# Block if should_trade = False
+if not learning_insights.should_trade:
+    return skip_result("Learning blocked")
+```
+
+**Pattern Stats Tracking:**
+- 12 pattern tipova (instrument, direction, session, killzone, trend, etc.)
+- Win/loss tracking po patternu
+- Automatski se azurira kad se trade zatvori
+
+**Confidence Adjustment:**
+- 0% win rate: -20%
+- <30% win rate: -15%
+- <45% win rate: -10%
+- >65% win rate: +10%
+- Max penalty: -25%, Max bonus: +15%
+
+### Status
+**LEARNING LOOP AKTIVAN - SUSTAV UCI I PRIMJENJUJE ZNANJE!**
+
+---
+
+## Faza 5.3: Learning Mode - COMPLETE (Session 18)
+
+### Cilj
+Implementirati "Learning Mode" s agresivnijim postavkama za brze prikupljanje podataka.
+
+### Implementacija
+
+**LearningModeConfig:**
+```python
+@dataclass
+class LearningModeConfig:
+    enabled: bool = True
+    target_trades: int = 50
+    current_trades: int = 0
+    auto_graduate: bool = True
+    aggressive_settings: dict  # 50% threshold, 5min cooldown
+    production_settings: dict  # 65% threshold, 15min cooldown
+```
+
+**Auto-graduation:**
+- Kad current_trades >= target_trades, automatski prelazi na production
+- Progress se prikazuje u dashboardu (0/50, 10/50, etc.)
+- Korisnik može ručno "Graduate Now" ili "Reset Progress"
+
+**Active Settings:**
+| Setting | Learning | Production |
+|---------|----------|------------|
+| Confidence Threshold | 50% | 65% |
+| Loss Streak Trigger | 3 | 5 |
+| Cooldown Minutes | 5 | 15 |
+| Max Daily Trades | 20 | 10 |
+| Max Trades/Instrument | 8 | 5 |
+
+### Status
+**LEARNING MODE AKTIVAN - 0/50 tradeova do graduation**
+
+---
+
+## Faza 5.4: AI Validation - COMPLETE (Session 18)
+
+### Cilj
+Implementirati pravi AI validation layer - Claude odlučuje o svakom tradeu.
+
+### Implementacija
+
+**validate_signal() metoda u llm_engine.py:**
+```python
+def validate_signal(self, signal_data: dict) -> SignalValidation:
+    prompt = f"""Analyze this signal: {signal_data}
+    Respond: APPROVE or REJECT with reasoning"""
+
+    response = claude.messages.create(...)
+    return SignalValidation(decision, reasoning, confidence_adjustment)
+```
+
+**Integracija u auto_executor.py:**
+```python
+# After all checks pass
+if config.should_use_ai_validation():
+    ai_result = self._validate_with_ai(signal)
+    if not ai_result.approved:
+        return skip_result(f"AI REJECTED: {ai_result.reasoning}")
+    # AI approved - proceed to execute
+```
+
+**SignalValidation Result:**
+```python
+@dataclass
+class SignalValidation:
+    decision: str  # APPROVE or REJECT
+    reasoning: str
+    confidence_adjustment: int
+    model: str
+    latency_ms: int
+```
+
+### Test Result
+```
+Signal found: GBP_USD LONG conf=87%
+Requesting AI validation for GBP_USD LONG...
+AI Validation response (4125ms): {"decision": "APPROVE"...
+AI APPROVED: Technical indicators align with LONG direction...
+```
+
+### Dashboard
+- AI Validation toggle u Configuration tabu
+- AI_APPROVED / AI_REJECTED u Activity logu
+- AI reasoning prikazan za svaku odluku
+
+### Status
+**AI VALIDATION AKTIVAN - CLAUDE VALIDIRA SVAKI TRADE!**
+
+---
+
+*Zadnje azuriranje: 2026-02-02 | Session 18 - Learning Mode + AI Validation COMPLETE*

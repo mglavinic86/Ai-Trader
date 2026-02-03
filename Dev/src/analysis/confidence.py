@@ -38,6 +38,10 @@ class ConfidenceResult:
     # Breakdown
     breakdown: dict = field(default_factory=dict)
 
+    # Analysis summary (for display)
+    bull_case: str = ""
+    bear_case: str = ""
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -49,7 +53,9 @@ class ConfidenceResult:
             "risk_tier": self.risk_tier,
             "risk_percent": self.risk_percent,
             "can_trade": self.can_trade,
-            "breakdown": self.breakdown
+            "breakdown": self.breakdown,
+            "bull_case": self.bull_case,
+            "bear_case": self.bear_case
         }
 
     def format_summary(self) -> str:
@@ -168,6 +174,56 @@ class ConfidenceCalculator:
             f"(tech={tech_score}, sent={sent_score}, adv={adv_adjustment}, rag={rag_penalty})"
         )
 
+        # Generate bull/bear case summaries
+        bull_points = []
+        bear_points = []
+
+        # Technical factors
+        if tech_score >= 60:
+            bull_points.append(f"Strong technical setup ({tech_score}%)")
+        elif tech_score <= 40:
+            bear_points.append(f"Weak technical setup ({tech_score}%)")
+
+        if technical.trend == "BULLISH":
+            bull_points.append(f"Bullish trend")
+        elif technical.trend == "BEARISH":
+            bear_points.append(f"Bearish trend")
+
+        if technical.rsi < 30:
+            bull_points.append(f"RSI oversold ({technical.rsi:.0f})")
+        elif technical.rsi > 70:
+            bear_points.append(f"RSI overbought ({technical.rsi:.0f})")
+
+        # Sentiment factors
+        if sent_score >= 60:
+            bull_points.append(f"Positive sentiment ({sent_score}%)")
+        elif sent_score <= 40:
+            bear_points.append(f"Negative sentiment ({sent_score}%)")
+
+        # External sentiment factors (Phase 2 Enhancement)
+        if hasattr(sentiment, 'has_external') and sentiment.has_external:
+            if sentiment.external_score > 0.3:
+                bull_points.append(f"External bullish ({sentiment.external_score:+.2f})")
+                if sentiment.external_reasoning:
+                    bull_points.append(f"News: {sentiment.external_reasoning[:50]}...")
+            elif sentiment.external_score < -0.3:
+                bear_points.append(f"External bearish ({sentiment.external_score:+.2f})")
+                if sentiment.external_reasoning:
+                    bear_points.append(f"News: {sentiment.external_reasoning[:50]}...")
+
+        # Adversarial factors
+        if adv_adjustment > 0:
+            bull_points.append(f"Adversarial boost (+{adv_adjustment})")
+        elif adv_adjustment < 0:
+            bear_points.append(f"Adversarial warning ({adv_adjustment})")
+
+        # RAG factors
+        if rag_penalty < 0:
+            bear_points.append(f"Similar past errors found ({rag_penalty})")
+
+        bull_case = "; ".join(bull_points) if bull_points else "No strong bullish factors"
+        bear_case = "; ".join(bear_points) if bear_points else "No significant bearish factors"
+
         return ConfidenceResult(
             confidence_score=final_score,
             technical_score=tech_score,
@@ -177,7 +233,9 @@ class ConfidenceCalculator:
             risk_tier=risk_tier,
             risk_percent=risk_percent,
             can_trade=can_trade,
-            breakdown=breakdown
+            breakdown=breakdown,
+            bull_case=bull_case,
+            bear_case=bear_case
         )
 
 

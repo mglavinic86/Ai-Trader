@@ -17,10 +17,12 @@ if str(DEV_DIR) not in sys.path:
 from src.utils.config import config
 from src.utils.database import db
 from src.trading.mt5_client import MT5Client, MT5Error
+from src.trading.orders import OrderManager
 from src.market.indicators import TechnicalAnalyzer
 from src.analysis.sentiment import SentimentAnalyzer
 from src.analysis.adversarial import AdversarialEngine
 from src.analysis.confidence import ConfidenceCalculator
+from src.analysis.llm_engine import LLMEngine
 from components.tooltips import ICONS, tooltip_text
 from components.skill_buttons import render_compact_skill_buttons, get_available_pairs
 from components.mt5_session import get_client, is_connected, reset_connection
@@ -49,6 +51,8 @@ def init_chat_state():
         ]
     if "last_analysis" not in st.session_state:
         st.session_state.last_analysis = None
+    if "last_llm_result" not in st.session_state:
+        st.session_state.last_llm_result = None
 
 
 # ===================
@@ -132,6 +136,8 @@ def process_command(user_input: str) -> str:
     # Trade command
     if command in ["trade", "t"]:
         return start_trade_workflow()
+    if command in ["approve", "approve_llm", "llm_trade", "llm"]:
+        return start_llm_trade_workflow()
 
     # Unknown command - try to be helpful
     if "/" in cmd or "_" in cmd:
@@ -264,6 +270,78 @@ Risk Tier: {confidence.risk_tier}
         if similar_errors:
             response += f"\n\n*Found {rag_warnings} similar past error(s) for this pair*"
 
+        # LLM advisory analysis (optional)
+        llm_engine = LLMEngine()
+        llm_result = llm_engine.analyze(
+            instrument=instrument,
+            price=price,
+            technical=technical,
+            sentiment=sentiment,
+            adversarial=adversarial,
+            rag_errors=similar_errors
+        )
+        st.session_state.last_llm_result = llm_result
+        if "llm_timeline" not in st.session_state:
+            st.session_state.llm_timeline = []
+        st.session_state.llm_timeline.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "instrument": instrument,
+            "skill": skill or "None",
+            "model": llm_result.model if llm_result else "n/a",
+            "latency_ms": llm_result.latency_ms if llm_result else None
+        })
+        st.session_state.last_llm_decision_id = None
+        if llm_result:
+            try:
+                decision_id = db.log_llm_decision({
+                    "instrument": instrument,
+                    "recommendation": llm_result.recommendation,
+                    "direction": llm_result.direction,
+                    "confidence_adjustment": llm_result.confidence_adjustment,
+                    "summary": llm_result.summary,
+                    "risk_notes": llm_result.risk_notes,
+                    "strategy_notes": llm_result.strategy_notes,
+                    "approved": 0,
+                    "executed": 0
+                })
+                st.session_state.last_llm_decision_id = decision_id
+            except Exception:
+                st.session_state.last_llm_decision_id = None
+            response += f"""
+
+---
+**LLM Advisory (Skills + Knowledge)**
+
+**Bias:** {llm_result.bias}
+**Recommendation:** {llm_result.recommendation}
+**Direction:** {llm_result.direction}
+**Meta:** Model={llm_result.model}, Latency={llm_result.latency_ms}ms, Tokens={llm_result.input_tokens or 'n/a'}/{llm_result.output_tokens or 'n/a'}, Skill={llm_result.skill_used or 'None'}, Knowledge={'Yes' if llm_result.knowledge_included else 'No'}
+**Summary:** {llm_result.summary}
+"""
+            if llm_result.risk_notes:
+                response += "\n**Risks:**\n" + "\n".join([f"- {r}" for r in llm_result.risk_notes])
+            if llm_result.strategy_notes:
+                response += "\n\n**Strategy Notes:**\n" + "\n".join([f"- {s}" for s in llm_result.strategy_notes])
+            if llm_result.recommendation.upper() == "TRADE":
+                response += "\n\nType `approve llm` to prepare this trade."
+            # Skill excerpt (if skill-based analysis)
+            if skill:
+                from src.core.settings_manager import settings_manager
+                skill_content = settings_manager.get_skill(skill.lower())
+                if skill_content:
+                    excerpt = skill_content.strip()
+                    if len(excerpt) > 800:
+                        excerpt = excerpt[:800] + "\n... (truncated)"
+                    response += f"\n\n**Skill Excerpt:**\n```\n{excerpt}\n```"
+
+            # Timeline
+            if st.session_state.llm_timeline:
+                recent = st.session_state.llm_timeline[-5:][::-1]
+                response += "\n\n**LLM Timeline (recent):**\n" + "\n".join(
+                    [f"- {t['time']} {t['instrument']} | Skill: {t['skill']} | Model: {t['model']} | {t['latency_ms']} ms"
+                     for t in recent]
+                )
+
         # Add simple explanation
         response += f"""
 
@@ -383,15 +461,187 @@ def start_trade_workflow() -> str:
 The analysis for {analysis['instrument']} does not meet the minimum confidence threshold.
 Run another analysis or wait for better market conditions."""
 
-    return f"""**Trade Setup: {analysis['instrument']}**
+    st.session_state.pending_trade = True
+    st.session_state.trade_params = build_trade_params(analysis)
 
-Current Price: {analysis['price']['ask']:.5f}
-Confidence: {analysis['confidence'].confidence_score}%
-Risk Tier: {analysis['confidence'].risk_tier}
+    return format_trade_setup_response(analysis, st.session_state.trade_params)
 
-To execute a trade, go to the **Positions** page and use the trade form.
 
-*Note: Full trade execution workflow coming in next update.*"""
+def start_llm_trade_workflow() -> str:
+    """Start LLM-approved trade workflow."""
+    if not st.session_state.last_analysis:
+        return "No recent analysis. Please run `analyze <PAIR>` first."
+
+    llm_result = st.session_state.get("last_llm_result")
+    if not llm_result:
+        return "No LLM analysis available. Run `analyze <PAIR>` first."
+
+    if llm_result.recommendation.upper() != "TRADE":
+        return "LLM recommendation is SKIP. Not preparing a trade."
+
+    analysis = st.session_state.last_analysis
+    if not analysis["confidence"].can_trade:
+        return f"""**Warning:** Confidence is too low ({analysis['confidence'].confidence_score}%)
+
+LLM recommended trade, but system confidence is below minimum.
+Run another analysis or wait for better market conditions."""
+
+    direction_override = llm_result.direction
+    st.session_state.pending_trade = True
+    st.session_state.trade_params = build_trade_params(analysis, direction_override=direction_override)
+
+    decision_id = st.session_state.get("last_llm_decision_id")
+    if decision_id:
+        try:
+            db.update_llm_decision(decision_id, approved=1)
+        except Exception:
+            pass
+
+    return format_trade_setup_response(analysis, st.session_state.trade_params, source="LLM")
+
+
+def build_trade_params(analysis: dict, direction_override: str = None) -> dict:
+    """Calculate trade parameters based on analysis and optional direction override."""
+    technical = analysis["technical"]
+    price = analysis["price"]
+    confidence = analysis["confidence"]
+
+    direction = "BUY" if technical.trend == "BULLISH" else "SELL"
+    if direction_override:
+        direction_override = direction_override.upper()
+        if direction_override in ["LONG", "BUY"]:
+            direction = "BUY"
+        elif direction_override in ["SHORT", "SELL"]:
+            direction = "SELL"
+
+    entry_price = price["ask"] if direction == "BUY" else price["bid"]
+
+    # SL/TP based on ATR (1.5x ATR for SL, 3x ATR for TP)
+    atr_pips = technical.atr_pips
+    pip_value = 0.0001 if "JPY" not in analysis["instrument"] else 0.01
+
+    if direction == "BUY":
+        sl_price = entry_price - (atr_pips * 1.5 * pip_value)
+        tp_price = entry_price + (atr_pips * 3.0 * pip_value)
+    else:
+        sl_price = entry_price + (atr_pips * 1.5 * pip_value)
+        tp_price = entry_price - (atr_pips * 3.0 * pip_value)
+
+    return {
+        "instrument": analysis["instrument"],
+        "direction": direction,
+        "entry_price": entry_price,
+        "sl_price": sl_price,
+        "tp_price": tp_price,
+        "atr_pips": atr_pips,
+        "confidence": confidence.confidence_score,
+        "risk_tier": confidence.risk_tier
+    }
+
+
+def format_trade_setup_response(analysis: dict, params: dict, source: str = "SYSTEM") -> str:
+    """Format the trade setup response for display."""
+    return f"""**Trade Setup ({source}): {analysis['instrument']}**
+
+| Parameter | Value |
+|-----------|-------|
+| Direction | **{params['direction']}** |
+| Entry | {params['entry_price']:.5f} |
+| Stop Loss | {params['sl_price']:.5f} ({params['atr_pips'] * 1.5:.1f} pips) |
+| Take Profit | {params['tp_price']:.5f} ({params['atr_pips'] * 3.0:.1f} pips) |
+| R:R | 1:2 |
+| Confidence | {params['confidence']}% |
+| Risk Tier | {params['risk_tier']} |
+
+**Click the EXECUTE TRADE button below to open this position.**"""
+
+
+def execute_trade() -> str:
+    """Execute the pending trade."""
+    if not st.session_state.get("trade_params"):
+        return "No trade setup. Run `analyze <PAIR>` then `trade` first."
+
+    params = st.session_state.trade_params
+    client = get_client()
+
+    try:
+        # Get account for position sizing
+        account = client.get_account()
+        balance = account["balance"]
+
+        # Risk amount based on tier (1-3% of balance)
+        risk_tier = params["risk_tier"]
+        if "TIER 3" in risk_tier:
+            risk_percent = 0.03
+        elif "TIER 2" in risk_tier:
+            risk_percent = 0.02
+        else:
+            risk_percent = 0.01
+
+        risk_amount = balance * risk_percent
+
+        # Calculate position size from risk
+        sl_pips = params["atr_pips"] * 1.5
+        pip_value_per_lot = 10  # Approximate for most pairs
+        position_size_lots = risk_amount / (sl_pips * pip_value_per_lot)
+        units = int(position_size_lots * 100000)
+
+        # Cap at reasonable size
+        units = min(units, 50000)  # Max 0.5 lots for safety
+
+        # Direction
+        if params["direction"] == "SELL":
+            units = -units
+
+        # Execute
+        order_manager = OrderManager(client)
+        result = order_manager.open_position(
+            instrument=params["instrument"],
+            units=units,
+            stop_loss=params["sl_price"],
+            take_profit=params["tp_price"],
+            confidence=params["confidence"],
+            risk_amount=risk_amount
+        )
+
+        decision_id = st.session_state.get("last_llm_decision_id")
+        if decision_id:
+            try:
+                db.update_llm_decision(
+                    decision_id,
+                    executed=1,
+                    trade_id=result.order_id if result else None
+                )
+            except Exception:
+                pass
+
+        # Clear pending trade
+        st.session_state.pending_trade = False
+        st.session_state.trade_params = None
+
+        if result.success:
+            return f"""**Trade Executed Successfully!**
+
+| | |
+|---|---|
+| Instrument | {params['instrument']} |
+| Direction | {params['direction']} |
+| Size | {abs(units):,} units ({abs(units)/100000:.2f} lots) |
+| Entry | {result.price:.5f} |
+| Stop Loss | {params['sl_price']:.5f} |
+| Take Profit | {params['tp_price']:.5f} |
+| Risk | {risk_amount:.2f} EUR ({risk_percent*100:.0f}%) |
+
+Order ID: {result.order_id}"""
+        else:
+            return f"""**Trade Failed**
+
+Error: {result.error}
+
+Please check positions and try again."""
+
+    except Exception as e:
+        return f"Trade execution error: {e}"
 
 
 # ===================
@@ -495,6 +745,33 @@ def main():
         for message in st.session_state.chat_messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
+
+    # Quick Trade Execution Button - shows when trade is ready
+    if st.session_state.get("pending_trade") and st.session_state.get("trade_params"):
+        params = st.session_state.trade_params
+        st.divider()
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            direction_color = "green" if params["direction"] == "BUY" else "red"
+            st.markdown(f"""
+            <div style="text-align: center; padding: 10px; border: 2px solid {direction_color}; border-radius: 10px;">
+                <h3 style="margin: 0;">{params['instrument'].replace('_', '/')}</h3>
+                <h2 style="margin: 5px 0; color: {direction_color};">{params['direction']}</h2>
+                <p style="margin: 0;">SL: {params['sl_price']:.5f} | TP: {params['tp_price']:.5f}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("EXECUTE TRADE", type="primary", use_container_width=True, key="execute_trade_btn"):
+                response = execute_trade()
+                st.session_state.chat_messages.append({"role": "assistant", "content": response})
+                st.rerun()
+
+            if st.button("Cancel", use_container_width=True, key="cancel_trade_btn"):
+                st.session_state.pending_trade = False
+                st.session_state.trade_params = None
+                st.session_state.chat_messages.append({"role": "assistant", "content": "Trade cancelled."})
+                st.rerun()
 
     # Chat input
     if prompt := st.chat_input("Type a command (e.g., 'analyze EUR/USD')..."):

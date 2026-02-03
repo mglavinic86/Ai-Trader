@@ -35,6 +35,7 @@ from src.market.indicators import TechnicalAnalyzer
 from src.analysis.sentiment import SentimentAnalyzer
 from src.analysis.adversarial import AdversarialEngine
 from src.analysis.confidence import ConfidenceCalculator
+from src.analysis.llm_engine import LLMEngine
 from src.core.settings_manager import settings_manager
 
 
@@ -62,10 +63,13 @@ class TradingInterface:
         self.sentiment_analyzer = SentimentAnalyzer()
         self.adversarial_engine = AdversarialEngine()
         self.confidence_calculator = ConfidenceCalculator()
+        self.llm_engine = LLMEngine()
 
         # State
         self.connected = False
         self.last_analysis = None
+        self.last_llm_result = None
+        self.last_llm_decision_id = None
 
     def print(self, message: str, style: str = None):
         """Print message to console."""
@@ -190,6 +194,10 @@ Forex Trading Assistant v1.0
             "pos": self._cmd_positions,
             "trade": self._cmd_trade,
             "t": self._cmd_trade,
+            "approve": self._cmd_approve_llm,
+            "approve_llm": self._cmd_approve_llm,
+            "llm_trade": self._cmd_approve_llm,
+            "llm": self._cmd_approve_llm,
             "close": self._cmd_close,
             "emergency": self._cmd_emergency,
             "report": self._cmd_report,
@@ -224,6 +232,7 @@ ANALYSIS:
 
 TRADING:
   trade             Start trade workflow
+  approve llm       Approve LLM recommendation for trade
   close <PAIR>      Close position
   emergency         Close ALL positions
 
@@ -313,6 +322,45 @@ EXAMPLES:
                 "confidence": confidence,
                 "timestamp": datetime.now()
             }
+
+            # LLM advisory
+            self.last_llm_result = None
+            self.last_llm_decision_id = None
+            llm_result = self.llm_engine.analyze(
+                instrument=instrument,
+                price=price,
+                technical=technical,
+                sentiment=sentiment,
+                adversarial=adversarial,
+                rag_errors=similar_errors
+            )
+            if llm_result:
+                self.last_llm_result = llm_result
+                try:
+                    decision_id = db.log_llm_decision({
+                        "instrument": instrument,
+                        "recommendation": llm_result.recommendation,
+                        "direction": llm_result.direction,
+                        "confidence_adjustment": llm_result.confidence_adjustment,
+                        "summary": llm_result.summary,
+                        "risk_notes": llm_result.risk_notes,
+                        "strategy_notes": llm_result.strategy_notes,
+                        "approved": 0,
+                        "executed": 0
+                    })
+                    self.last_llm_decision_id = decision_id
+                except Exception:
+                    self.last_llm_decision_id = None
+
+                self.print_panel(
+                    f"Bias: {llm_result.bias}\n"
+                    f"Recommendation: {llm_result.recommendation}\n"
+                    f"Direction: {llm_result.direction}\n\n"
+                    f"Summary: {llm_result.summary}",
+                    title="LLM Advisory"
+                )
+                if llm_result.recommendation.upper() == "TRADE":
+                    self.print("Type 'approve llm' to prepare this trade.\n")
 
             # Recommendation
             if confidence.can_trade:
@@ -446,6 +494,114 @@ Today's P/L: {account['currency']} {daily_pnl:+,.2f}
 
         # This would continue with trade execution...
         self.print_warning("Trade execution coming in next update!")
+
+    def _cmd_approve_llm(self, args):
+        """Approve LLM recommendation and execute trade after confirmation."""
+        if not self.connected:
+            self.print_error("Not connected to MT5")
+            return
+
+        if not self.last_analysis:
+            self.print_warning("No recent analysis. Run 'analyze <PAIR>' first.")
+            return
+
+        if not self.last_llm_result:
+            self.print_warning("No LLM analysis available. Run 'analyze <PAIR>' first.")
+            return
+
+        if self.last_llm_result.recommendation.upper() != "TRADE":
+            self.print_warning("LLM recommendation is SKIP. No trade prepared.")
+            return
+
+        analysis = self.last_analysis
+        if not analysis["confidence"].can_trade:
+            self.print_warning(f"Confidence too low ({analysis['confidence'].confidence_score}%). Not recommended.")
+            return
+
+        direction = "LONG" if analysis["technical"].trend == "BULLISH" else "SHORT"
+        if self.last_llm_result.direction.upper() in ["LONG", "SHORT"]:
+            direction = self.last_llm_result.direction.upper()
+
+        price = analysis["price"]
+        entry_price = price["ask"] if direction == "LONG" else price["bid"]
+
+        atr_pips = analysis["technical"].atr_pips
+        pip_value = 0.0001 if "JPY" not in analysis["instrument"] else 0.01
+        if direction == "LONG":
+            sl_price = entry_price - (atr_pips * 1.5 * pip_value)
+            tp_price = entry_price + (atr_pips * 3.0 * pip_value)
+        else:
+            sl_price = entry_price + (atr_pips * 1.5 * pip_value)
+            tp_price = entry_price - (atr_pips * 3.0 * pip_value)
+
+        if self.last_llm_decision_id:
+            try:
+                db.update_llm_decision(self.last_llm_decision_id, approved=1)
+            except Exception:
+                pass
+
+        self.print_panel(
+            f"Instrument: {analysis['instrument']}\n"
+            f"Direction: {direction}\n"
+            f"Entry: {entry_price:.5f}\n"
+            f"SL: {sl_price:.5f} ({atr_pips * 1.5:.1f} pips)\n"
+            f"TP: {tp_price:.5f} ({atr_pips * 3.0:.1f} pips)\n"
+            f"Confidence: {analysis['confidence'].confidence_score}%\n"
+            f"Risk Tier: {analysis['confidence'].risk_tier}",
+            title="LLM Trade Setup"
+        )
+
+        if RICH_AVAILABLE:
+            if not Confirm.ask("Execute LLM trade now?", default=False):
+                return
+        else:
+            if input("Execute LLM trade now? (y/n): ").lower() != 'y':
+                return
+
+        # Calculate risk amount from tier
+        account = self.client.get_account()
+        balance = account["balance"]
+        risk_percent = analysis["confidence"].risk_percent
+        risk_amount = balance * risk_percent
+
+        # Position sizing using existing sizer
+        size_result = calculate_position_size(
+            equity=balance,
+            confidence=analysis["confidence"].confidence_score,
+            entry_price=entry_price,
+            stop_loss=sl_price,
+            instrument=analysis["instrument"]
+        )
+
+        if not size_result.can_trade:
+            self.print_warning(f"Position size invalid: {size_result.reason}")
+            return
+
+        units = size_result.units if direction == "LONG" else -size_result.units
+
+        result = self.order_manager.open_position(
+            instrument=analysis["instrument"],
+            units=units,
+            stop_loss=sl_price,
+            take_profit=tp_price,
+            confidence=analysis["confidence"].confidence_score,
+            risk_amount=risk_amount
+        )
+
+        if self.last_llm_decision_id:
+            try:
+                db.update_llm_decision(
+                    self.last_llm_decision_id,
+                    executed=1,
+                    trade_id=result.order_id if result else None
+                )
+            except Exception:
+                pass
+
+        if result.success:
+            self.print_success(f"LLM trade executed: {analysis['instrument']} {direction}")
+        else:
+            self.print_error(f"LLM trade failed: {result.error}")
 
     def _cmd_close(self, args):
         """Close a position."""

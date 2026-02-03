@@ -43,6 +43,11 @@ class BacktestConfig:
     atr_sl_multiplier: float = 2.0  # SL = ATR * multiplier
     atr_tp_multiplier: float = 4.0  # TP = ATR * multiplier (2:1 R:R)
     max_positions: int = 1  # Max concurrent positions
+    spread_pips: float = 1.2  # Approximate average spread
+    slippage_pips: float = 0.2  # Slippage per side
+    commission_per_lot: float = 7.0  # Round-turn commission per lot
+    session_hours: Optional[list[tuple[int, int]]] = None  # UTC hours, entries only
+    allow_weekends: bool = False
 
 
 @dataclass
@@ -56,12 +61,15 @@ class SimulatedTrade:
     units: int
     confidence: int
     risk_tier: str
+    entry_price_effective: Optional[float] = None
 
     exit_time: Optional[str] = None
     exit_price: Optional[float] = None
+    exit_price_effective: Optional[float] = None
     exit_reason: Optional[str] = None  # SL, TP, SIGNAL
     pnl: float = 0.0
     pnl_pips: float = 0.0
+    commission: float = 0.0
 
     @property
     def is_open(self) -> bool:
@@ -75,6 +83,7 @@ class SimulatedTrade:
         return {
             "entry_time": self.entry_time,
             "entry_price": self.entry_price,
+            "entry_price_effective": self.entry_price_effective,
             "direction": self.direction.value,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
@@ -83,9 +92,11 @@ class SimulatedTrade:
             "risk_tier": self.risk_tier,
             "exit_time": self.exit_time,
             "exit_price": self.exit_price,
+            "exit_price_effective": self.exit_price_effective,
             "exit_reason": self.exit_reason,
             "pnl": self.pnl,
             "pnl_pips": self.pnl_pips,
+            "commission": self.commission,
         }
 
 
@@ -121,6 +132,11 @@ class BacktestResult:
                 "initial_capital": self.config.initial_capital,
                 "min_confidence": self.config.min_confidence,
                 "use_adversarial": self.config.use_adversarial,
+                "spread_pips": self.config.spread_pips,
+                "slippage_pips": self.config.slippage_pips,
+                "commission_per_lot": self.config.commission_per_lot,
+                "session_hours": self.config.session_hours,
+                "allow_weekends": self.config.allow_weekends,
             },
             "trades": [t.to_dict() for t in self.trades],
             "equity_curve": self.equity_curve,
@@ -154,6 +170,62 @@ class BacktestEngine:
             return 0.01
         return 0.0001
 
+    def _get_contract_size(self, instrument: str) -> float:
+        """Get contract size for instrument (approx)."""
+        if "BTC" in instrument or "ETH" in instrument:
+            return 1.0
+        return 100000.0
+
+    def _pip_to_price(self, pips: float, instrument: str) -> float:
+        return pips * self._get_pip_value(instrument)
+
+    def _apply_costs(
+        self,
+        price: float,
+        direction: TradeDirection,
+        instrument: str,
+        spread_pips: float,
+        slippage_pips: float,
+        side: str
+    ) -> float:
+        """Apply spread and slippage to a mid price."""
+        half_spread = self._pip_to_price(spread_pips / 2, instrument)
+        slip = self._pip_to_price(slippage_pips, instrument)
+
+        if direction == TradeDirection.LONG:
+            if side == "entry":
+                return price + half_spread + slip
+            return price - half_spread - slip
+        else:
+            if side == "entry":
+                return price - half_spread - slip
+            return price + half_spread + slip
+
+    def _is_trade_time(self, candle_time: str, config: BacktestConfig) -> bool:
+        """Check if candle time is within allowed session (UTC hours)."""
+        try:
+            dt = datetime.fromisoformat(candle_time.replace("Z", "+00:00"))
+        except Exception:
+            return True
+
+        if not config.allow_weekends and dt.weekday() >= 5:
+            return False
+
+        if not config.session_hours:
+            return True
+
+        hour = dt.hour
+        for start, end in config.session_hours:
+            if start <= end:
+                if start <= hour < end:
+                    return True
+            else:
+                # Overnight session (e.g., 21-6)
+                if hour >= start or hour < end:
+                    return True
+
+        return False
+
     def _calculate_pnl(
         self,
         entry_price: float,
@@ -171,8 +243,8 @@ class BacktestEngine:
             price_diff = entry_price - exit_price
 
         pnl_pips = price_diff / pip_value
-        # Approximate PnL (simplified - assumes 1 pip = $10 for standard lot on majors)
-        pnl = pnl_pips * units * pip_value * 10000
+        # Units are in base; pnl in quote currency for FX pairs
+        pnl = price_diff * units
 
         return pnl, pnl_pips
 
@@ -209,14 +281,9 @@ class BacktestEngine:
         if pip_distance <= 0:
             return 0, "NO TRADE", 0.0
 
-        # Calculate units (simplified)
-        # Value per pip per unit = pip_value * lot_size
-        # For micro lots (0.01), 1 pip ~ $0.10 on EUR/USD
-        value_per_pip = pip_value * 100000 * 0.01  # Micro lot
-        units = int(risk_amount / (pip_distance * value_per_pip))
-
-        # Minimum 1 unit, maximum reasonable size
-        units = max(1, min(units, 100000))
+        # Units = risk / (pip_distance * pip_value_per_unit)
+        units = int(risk_amount / (pip_distance * pip_value))
+        units = max(1, units)
 
         return units, tier, risk_percent
 
@@ -389,63 +456,105 @@ class BacktestEngine:
                     exit_price, exit_reason = sl_tp_result
                     trade = state.open_position
 
+                    # Apply spread/slippage to exit
+                    exit_price_effective = self._apply_costs(
+                        exit_price,
+                        trade.direction,
+                        config.instrument,
+                        config.spread_pips,
+                        config.slippage_pips,
+                        side="exit"
+                    )
+
                     # Calculate PnL
                     pnl, pnl_pips = self._calculate_pnl(
-                        trade.entry_price,
-                        exit_price,
+                        trade.entry_price_effective or trade.entry_price,
+                        exit_price_effective,
                         trade.direction,
                         trade.units,
                         config.instrument
                     )
 
+                    # Apply commission (round turn)
+                    contract_size = self._get_contract_size(config.instrument)
+                    lots = abs(trade.units) / contract_size
+                    commission = config.commission_per_lot * lots
+
                     # Close trade
                     trade.exit_time = current_candle["time"]
                     trade.exit_price = exit_price
+                    trade.exit_price_effective = exit_price_effective
                     trade.exit_reason = exit_reason
-                    trade.pnl = pnl
+                    trade.pnl = pnl - commission
                     trade.pnl_pips = pnl_pips
+                    trade.commission = commission
 
                     # Update state
-                    state.cash += pnl
+                    state.cash += trade.pnl
                     state.equity = state.cash
                     state.closed_trades.append(trade)
                     state.open_position = None
 
             # Generate signal if no open position
             if state.open_position is None:
-                signal = self._generate_signal(analysis_candles, config.instrument, config)
+                # Session filter for entries
+                if not self._is_trade_time(current_candle["time"], config):
+                    # Still record equity curve below
+                    pass
+                else:
+                    signal = self._generate_signal(analysis_candles, config.instrument, config)
 
-                if signal:
-                    # Calculate position size
-                    units, tier, risk_pct = self._get_position_size(
-                        state.equity,
-                        signal["confidence"],
-                        signal["entry_price"],
-                        signal["stop_loss"],
-                        config.instrument
-                    )
-
-                    if units > 0:
-                        # Open new position
-                        trade = SimulatedTrade(
-                            entry_time=current_candle["time"],
-                            entry_price=signal["entry_price"],
-                            direction=signal["direction"],
-                            stop_loss=signal["stop_loss"],
-                            take_profit=signal["take_profit"],
-                            units=units,
-                            confidence=signal["confidence"],
-                            risk_tier=tier
+                    if signal:
+                        # Apply spread/slippage to entry
+                        entry_price_effective = self._apply_costs(
+                            signal["entry_price"],
+                            signal["direction"],
+                            config.instrument,
+                            config.spread_pips,
+                            config.slippage_pips,
+                            side="entry"
                         )
-                        state.open_position = trade
+
+                        # Calculate position size based on effective entry
+                        units, tier, risk_pct = self._get_position_size(
+                            state.equity,
+                            signal["confidence"],
+                            entry_price_effective,
+                            signal["stop_loss"],
+                            config.instrument
+                        )
+
+                        if units > 0:
+                            # Open new position
+                            trade = SimulatedTrade(
+                                entry_time=current_candle["time"],
+                                entry_price=signal["entry_price"],
+                                entry_price_effective=entry_price_effective,
+                                direction=signal["direction"],
+                                stop_loss=signal["stop_loss"],
+                                take_profit=signal["take_profit"],
+                                units=units,
+                                confidence=signal["confidence"],
+                                risk_tier=tier
+                            )
+                            state.open_position = trade
 
             # Record equity
             current_equity = state.cash
             if state.open_position:
                 # Mark-to-market for open position
+                mid = current_candle["close"]
+                mark_price = self._apply_costs(
+                    mid,
+                    state.open_position.direction,
+                    config.instrument,
+                    config.spread_pips,
+                    0.0,
+                    side="exit"
+                )
                 unrealized_pnl, _ = self._calculate_pnl(
-                    state.open_position.entry_price,
-                    current_candle["close"],
+                    state.open_position.entry_price_effective or state.open_position.entry_price,
+                    mark_price,
                     state.open_position.direction,
                     state.open_position.units,
                     config.instrument
@@ -464,21 +573,36 @@ class BacktestEngine:
             last_candle = candles[-1]
             trade = state.open_position
 
-            pnl, pnl_pips = self._calculate_pnl(
-                trade.entry_price,
+            exit_price_effective = self._apply_costs(
                 last_candle["close"],
+                trade.direction,
+                config.instrument,
+                config.spread_pips,
+                config.slippage_pips,
+                side="exit"
+            )
+
+            pnl, pnl_pips = self._calculate_pnl(
+                trade.entry_price_effective or trade.entry_price,
+                exit_price_effective,
                 trade.direction,
                 trade.units,
                 config.instrument
             )
 
+            contract_size = self._get_contract_size(config.instrument)
+            lots = abs(trade.units) / contract_size
+            commission = config.commission_per_lot * lots
+
             trade.exit_time = last_candle["time"]
             trade.exit_price = last_candle["close"]
+            trade.exit_price_effective = exit_price_effective
             trade.exit_reason = "END"
-            trade.pnl = pnl
+            trade.pnl = pnl - commission
             trade.pnl_pips = pnl_pips
+            trade.commission = commission
 
-            state.cash += pnl
+            state.cash += trade.pnl
             state.closed_trades.append(trade)
 
         run_time = time.time() - start_time

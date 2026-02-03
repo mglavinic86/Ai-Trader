@@ -177,6 +177,16 @@ def calculate_position_size(
     # For most pairs, pip_value_per_unit ≈ pip_val (simplified)
     units = int(risk_amount / (pip_distance * pip_val))
 
+    # MARGIN PROTECTION: Cap position size to prevent "No money" errors
+    # Max ~1 standard lot (100,000 units) per trade for manageable risk
+    MAX_UNITS_PER_TRADE = 100000
+    if units > MAX_UNITS_PER_TRADE:
+        logger.warning(f"Position size {units} exceeds max {MAX_UNITS_PER_TRADE}, capping")
+        units = MAX_UNITS_PER_TRADE
+        # Recalculate actual risk with capped units
+        risk_amount = units * pip_distance * pip_val
+        risk_percent = risk_amount / equity if equity > 0 else 0
+
     if units <= 0:
         return PositionSizeResult(
             can_trade=False, units=0, risk_percent=risk_percent, risk_amount=risk_amount,

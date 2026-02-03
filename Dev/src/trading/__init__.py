@@ -1,5 +1,5 @@
 # Trading Module
-from src.trading.oanda_client import OandaClient, OandaError
+from src.trading.mt5_client import MT5Client, MT5Error
 from src.trading.orders import OrderManager, OrderResult
 from src.trading.position_sizer import (
     calculate_position_size,
@@ -16,9 +16,9 @@ from src.trading.risk_manager import (
 # Use: from src.trading.trade_lifecycle import trade_closed_handler
 
 __all__ = [
-    # OANDA Client
-    "OandaClient",
-    "OandaError",
+    # MT5 Client
+    "MT5Client",
+    "MT5Error",
     # Orders
     "OrderManager",
     "OrderResult",

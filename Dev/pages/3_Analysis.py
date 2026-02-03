@@ -7,6 +7,8 @@ Technical analysis with charts, AI recommendation, and trade execution.
 import streamlit as st
 import pandas as pd
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 DEV_DIR = Path(__file__).parent.parent
@@ -21,6 +23,10 @@ from src.market.indicators import TechnicalAnalyzer
 from src.analysis.sentiment import SentimentAnalyzer
 from src.analysis.adversarial import AdversarialEngine
 from src.analysis.confidence import ConfidenceCalculator
+from src.analysis.llm_engine import LLMEngine
+from src.core.settings_manager import settings_manager
+from src.utils.database import db
+from src.utils.instrument_profiles import get_profile, is_in_session
 from components.tooltips import (
     metric_with_tooltip,
     tooltip_text,
@@ -29,7 +35,7 @@ from components.tooltips import (
     get_tooltip,
 )
 from components.status_bar import render_status_bar, get_status_bar_data
-from components.mt5_session import get_client, is_connected
+from components.mt5_session import get_client, reset_connection
 
 st.set_page_config(page_title="Analysis - AI Trader", page_icon="", layout="wide")
 
@@ -79,6 +85,9 @@ def main():
 
     if not st.session_state.connected:
         st.error("Not connected to MT5")
+        if st.button("Reconnect MT5"):
+            reset_connection()
+            st.rerun()
         return
 
     # Controls
@@ -95,6 +104,19 @@ def main():
     with col3:
         candle_count = st.number_input("Candles", min_value=50, max_value=500, value=100)
 
+    profile = get_profile(instrument)
+
+    # Skill focus selector
+    skills = ["None"] + settings_manager.list_skills()
+    skill_focus = st.selectbox(
+        "Skill Focus",
+        skills,
+        help="Optional: focus analysis on a specific skill/strategy"
+    )
+    llm_engine = LLMEngine()
+    llm_available, llm_reason = llm_engine.status()
+    st.caption(f"LLM Status: {'Enabled' if llm_available else 'Disabled'} - {llm_reason}")
+
     # View mode toggle
     col1, col2 = st.columns([3, 1])
     with col2:
@@ -110,8 +132,15 @@ def main():
     if st.button("Run Analysis", type="primary"):
         try:
             with st.spinner("Running AI analysis..."):
+                if not is_in_session(profile):
+                    st.warning("Outside allowed trading session for this instrument.")
+
                 # Get price
                 price = client.get_price(instrument)
+
+                max_spread = profile.get("max_spread_pips")
+                if max_spread is not None and price["spread_pips"] > max_spread:
+                    st.warning(f"Spread too high for this instrument ({price['spread_pips']:.1f} > {max_spread})")
 
                 # Get candles
                 candles = client.get_candles(instrument, timeframe, candle_count)
@@ -128,6 +157,10 @@ def main():
                 # 1. Technical analysis
                 tech_analyzer = TechnicalAnalyzer()
                 technical = tech_analyzer.analyze(candles, instrument)
+
+                min_atr = profile.get("min_atr_pips")
+                if min_atr is not None and technical.atr_pips < min_atr:
+                    st.warning(f"Volatility too low (ATR {technical.atr_pips:.1f} < {min_atr})")
 
                 # 2. Sentiment analysis
                 sent_analyzer = SentimentAnalyzer()
@@ -196,6 +229,56 @@ def main():
                     "position_size": position_size,
                     "account": account
                 }
+
+                # LLM advisory (optional)
+                llm_result = None
+                if llm_engine.is_available():
+                    selected_skill = None if skill_focus == "None" else skill_focus
+                    skill_content = settings_manager.get_skill(selected_skill) if selected_skill else None
+                    with st.spinner("Running LLM analysis..."):
+                        llm_result = llm_engine.analyze(
+                            instrument=instrument,
+                            price=price,
+                            technical=technical,
+                            sentiment=sentiment,
+                            adversarial=adversarial,
+                            rag_errors=[],
+                            skill_name=selected_skill,
+                            skill_content=skill_content
+                        )
+                    st.session_state.llm_result = llm_result
+                    st.session_state.llm_skill_excerpt = None
+                    if skill_content:
+                        excerpt = skill_content.strip()
+                        if len(excerpt) > 800:
+                            excerpt = excerpt[:800] + "\n... (truncated)"
+                        st.session_state.llm_skill_excerpt = excerpt
+
+                    # Timeline log
+                    if "llm_timeline" not in st.session_state:
+                        st.session_state.llm_timeline = []
+                    st.session_state.llm_timeline.append({
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "instrument": instrument,
+                        "skill": selected_skill or "None",
+                        "model": llm_result.model if llm_result else "n/a",
+                        "latency_ms": llm_result.latency_ms if llm_result else None
+                    })
+                    if llm_result:
+                        try:
+                            db.log_llm_decision({
+                                "instrument": instrument,
+                                "recommendation": llm_result.recommendation,
+                                "direction": llm_result.direction,
+                                "confidence_adjustment": llm_result.confidence_adjustment,
+                                "summary": llm_result.summary,
+                                "risk_notes": llm_result.risk_notes,
+                                "strategy_notes": llm_result.strategy_notes,
+                                "approved": 0,
+                                "executed": 0
+                            })
+                        except Exception:
+                            pass
 
         except MT5Error as e:
             st.error(f"Analysis failed: {e}")
@@ -290,6 +373,44 @@ def main():
         # EXECUTE TRADE BUTTON
         # ============================================
         st.markdown("---")
+
+        # LLM advisory
+        llm_result = st.session_state.get("llm_result")
+        if llm_result:
+            st.subheader("LLM Advisory (Skill-Aware)")
+            st.caption(
+                f"Model: {llm_result.model} | "
+                f"Latency: {llm_result.latency_ms} ms | "
+                f"Tokens: {llm_result.input_tokens or 'n/a'}/{llm_result.output_tokens or 'n/a'} | "
+                f"Skill: {llm_result.skill_used or 'None'} | "
+                f"Knowledge: {'Yes' if llm_result.knowledge_included else 'No'}"
+            )
+            st.markdown(
+                f"**Bias:** {llm_result.bias}\n\n"
+                f"**Recommendation:** {llm_result.recommendation}\n\n"
+                f"**Direction:** {llm_result.direction}\n\n"
+                f"**Summary:** {llm_result.summary}"
+            )
+            if llm_result.risk_notes:
+                st.markdown("**Risks:**\n" + "\n".join([f"- {r}" for r in llm_result.risk_notes]))
+            if llm_result.strategy_notes:
+                st.markdown("**Strategy Notes:**\n" + "\n".join([f"- {s}" for s in llm_result.strategy_notes]))
+            with st.expander("Show raw LLM output"):
+                st.code(llm_result.raw or "")
+            skill_excerpt = st.session_state.get("llm_skill_excerpt")
+            if skill_excerpt:
+                with st.expander("Show skill excerpt used in prompt"):
+                    st.code(skill_excerpt)
+            timeline = st.session_state.get("llm_timeline", [])
+            if timeline:
+                with st.expander("LLM Timeline"):
+                    for item in timeline[-10:][::-1]:
+                        st.markdown(
+                            f"- **{item['time']}** {item['instrument']} | "
+                            f"Skill: {item['skill']} | Model: {item['model']} | "
+                            f"Latency: {item['latency_ms']} ms"
+                        )
+            st.markdown("---")
 
         if confidence.can_trade and result["position_size"].can_trade:
             col1, col2, col3 = st.columns([1, 2, 1])

@@ -24,7 +24,7 @@ def main():
     st.title("Settings")
 
     # Tabs for different settings sections
-    tab1, tab2, tab3 = st.tabs(["Configuration", "Risk Management", "System"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Configuration", "Risk Management", "News API", "System"])
 
     # === Configuration Tab ===
     with tab1:
@@ -175,8 +175,204 @@ def main():
 
         st.info("These limits are defined in `src/utils/config.py` and should only be modified by developers.")
 
-    # === System Tab ===
+    # === News API Tab ===
     with tab3:
+        st.subheader("News Calendar API")
+
+        st.markdown("""
+        Configure automatic economic calendar updates from news providers.
+        The calendar is used to avoid trading during high-impact news events.
+        """)
+
+        # Load news provider config
+        news_config_path = DEV_DIR / "settings" / "news_providers.json"
+        try:
+            with open(news_config_path, "r", encoding="utf-8") as f:
+                news_config = json.load(f)
+        except Exception:
+            news_config = {"providers": {}}
+
+        # Provider settings
+        st.markdown("### Providers")
+
+        providers = news_config.get("providers", {})
+
+        # Finnhub
+        st.markdown("#### Finnhub (Recommended)")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            finnhub_key = st.text_input(
+                "Finnhub API Key",
+                value=providers.get("finnhub", {}).get("api_key", ""),
+                type="password",
+                help="Get free API key at https://finnhub.io (60 calls/min)"
+            )
+        with col2:
+            finnhub_enabled = st.checkbox(
+                "Enabled",
+                value=providers.get("finnhub", {}).get("enabled", True),
+                key="finnhub_enabled"
+            )
+        st.caption("[Get Finnhub API Key (Free)](https://finnhub.io/register)")
+
+        # FMP
+        st.markdown("#### Financial Modeling Prep")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            fmp_key = st.text_input(
+                "FMP API Key",
+                value=providers.get("fmp", {}).get("api_key", ""),
+                type="password",
+                help="Get free API key at financialmodelingprep.com (250 calls/day)"
+            )
+        with col2:
+            fmp_enabled = st.checkbox(
+                "Enabled",
+                value=providers.get("fmp", {}).get("enabled", True),
+                key="fmp_enabled"
+            )
+        st.caption("[Get FMP API Key (Free)](https://site.financialmodelingprep.com/developer)")
+
+        # Forex Factory
+        st.markdown("#### Forex Factory")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.text("Uses JBlanked API (may require key)")
+        with col2:
+            ff_enabled = st.checkbox(
+                "Enabled",
+                value=providers.get("forexfactory", {}).get("enabled", True),
+                key="ff_enabled"
+            )
+
+        # Recurring (fallback)
+        st.markdown("#### Recurring Events (Fallback)")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.text("Auto-generates known high-impact events (NFP, FOMC, etc.)")
+        with col2:
+            recurring_enabled = st.checkbox(
+                "Enabled",
+                value=providers.get("recurring", {}).get("enabled", True),
+                key="recurring_enabled"
+            )
+        st.caption("Works without API key - recommended as fallback")
+
+        # Refresh settings
+        st.markdown("### Refresh Settings")
+        col1, col2 = st.columns(2)
+        with col1:
+            refresh_interval = st.number_input(
+                "Refresh Interval (minutes)",
+                min_value=15,
+                max_value=240,
+                value=news_config.get("refresh_interval_minutes", 60),
+                step=15
+            )
+        with col2:
+            days_ahead = st.number_input(
+                "Days Ahead",
+                min_value=1,
+                max_value=14,
+                value=news_config.get("days_ahead", 7),
+                step=1
+            )
+
+        # Save button
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Save News Config", type="primary"):
+                try:
+                    news_config["providers"]["finnhub"] = {
+                        "enabled": finnhub_enabled,
+                        "api_key": finnhub_key,
+                        "priority": 1
+                    }
+                    news_config["providers"]["fmp"] = {
+                        "enabled": fmp_enabled,
+                        "api_key": fmp_key,
+                        "priority": 2
+                    }
+                    news_config["providers"]["forexfactory"] = {
+                        "enabled": ff_enabled,
+                        "priority": 3
+                    }
+                    news_config["providers"]["recurring"] = {
+                        "enabled": recurring_enabled,
+                        "priority": 10
+                    }
+                    news_config["refresh_interval_minutes"] = refresh_interval
+                    news_config["days_ahead"] = days_ahead
+
+                    with open(news_config_path, "w", encoding="utf-8") as f:
+                        json.dump(news_config, f, indent=2)
+
+                    st.success("News config saved!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error saving: {e}")
+
+        with col2:
+            if st.button("Refresh Now"):
+                try:
+                    import asyncio
+                    from src.analysis.news_filter import news_filter
+
+                    async def do_refresh():
+                        return await news_filter.refresh_from_api(force=True)
+
+                    success = asyncio.run(do_refresh())
+                    if success:
+                        st.success("Calendar refreshed from API!")
+                    else:
+                        st.warning("Refresh failed - check API key or try backup provider")
+                except Exception as e:
+                    st.error(f"Refresh error: {e}")
+
+        # Current calendar status
+        st.markdown("### Current Calendar Status")
+        try:
+            from src.analysis.news_filter import news_filter
+            status = news_filter.get_calendar_status()
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Events", status["total_events"])
+            with col2:
+                st.metric("HIGH Impact", status["high_impact"])
+            with col3:
+                st.metric("MEDIUM Impact", status["medium_impact"])
+
+            st.text(f"Source: {status['source']}")
+            st.text(f"Last Updated: {status['last_updated'] or 'Never'}")
+
+        except Exception as e:
+            st.error(f"Could not load calendar status: {e}")
+
+        # View current events
+        with st.expander("View Upcoming Events"):
+            try:
+                calendar_path = DEV_DIR / "settings" / "news_calendar.json"
+                if calendar_path.exists():
+                    with open(calendar_path, "r", encoding="utf-8") as f:
+                        calendar_data = json.load(f)
+
+                    events = calendar_data.get("events", [])
+                    if events:
+                        import pandas as pd
+                        df = pd.DataFrame(events)
+                        if "time" in df.columns:
+                            df = df.sort_values("time")
+                        st.dataframe(df, use_container_width=True)
+                    else:
+                        st.info("No events in calendar")
+                else:
+                    st.info("Calendar file not found - click Refresh Now")
+            except Exception as e:
+                st.error(f"Error loading events: {e}")
+
+    # === System Tab ===
+    with tab4:
         st.subheader("System Information")
 
         # Connection status

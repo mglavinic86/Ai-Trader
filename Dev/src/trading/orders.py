@@ -21,6 +21,8 @@ from src.trading.risk_manager import RiskManager, ValidationResult
 from src.utils.config import config
 from src.utils.logger import logger
 from src.utils.helpers import generate_trade_id, format_price, get_pip_divisor
+from src.utils.database import db
+from src.utils.instrument_profiles import get_profile, is_in_session
 
 
 @dataclass
@@ -132,8 +134,15 @@ class OrderManager:
                 error="Units cannot be zero"
             )
 
+        equity = None
         # === RISK VALIDATION GATE ===
         if not _bypass_validation:
+            profile = get_profile(instrument)
+            if not is_in_session(profile):
+                return OrderResult(
+                    success=False,
+                    error="Outside allowed trading session for this instrument"
+                )
             # Require validation parameters
             if confidence is None or risk_amount is None:
                 logger.error("TRADE REJECTED: Missing risk validation parameters (confidence, risk_amount)")
@@ -145,7 +154,7 @@ class OrderManager:
             # Get current state for validation
             try:
                 account = self.client.get_account()
-                equity = account.get("equity") or account.get("balance")
+                equity = account.get("nav") or account.get("equity") or account.get("balance")
                 if equity is None or equity <= 0:
                     logger.error("CRITICAL: Cannot determine account equity")
                     return OrderResult(
@@ -165,13 +174,26 @@ class OrderManager:
                 else:
                     spread_pips = 2.0  # Default if unavailable
 
+                max_spread = profile.get("max_spread_pips")
+                if max_spread is not None and spread_pips > max_spread:
+                    logger.warning(f"TRADE REJECTED: Spread {spread_pips:.1f} > max {max_spread}")
+                    return OrderResult(
+                        success=False,
+                        error=f"Spread too high ({spread_pips:.1f} pips > {max_spread})"
+                    )
+
                 # Run validation
+                daily_pnl = db.get_daily_pnl()
+                weekly_pnl = db.get_weekly_pnl()
+
                 validation = self.risk_manager.validate_trade(
                     equity=equity,
                     risk_amount=risk_amount,
                     confidence=confidence,
                     open_positions=positions,
-                    spread_pips=spread_pips
+                    spread_pips=spread_pips,
+                    daily_pnl=daily_pnl,
+                    weekly_pnl=weekly_pnl
                 )
 
                 if not validation.valid:
@@ -210,8 +232,9 @@ class OrderManager:
         if not symbol_info.visible:
             mt5.symbol_select(symbol, True)
 
-        # Convert units to lots (1 lot = 100,000 units for forex)
-        lot_size = abs(units) / 100000.0
+        # Convert units to lots using contract size (MT5 can vary by symbol)
+        contract_size = getattr(symbol_info, "trade_contract_size", 100000.0) or 100000.0
+        lot_size = abs(units) / contract_size
 
         # Round to broker's volume step with correct decimal places
         volume_step = symbol_info.volume_step
@@ -242,6 +265,7 @@ class OrderManager:
             )
 
         price = tick.ask if units > 0 else tick.bid
+        requested_price = price
 
         # Determine supported filling mode for this symbol
         filling_mode = self._get_filling_mode(symbol_info)
@@ -288,13 +312,92 @@ class OrderManager:
                     raw_response={"retcode": result.retcode, "comment": result.comment}
                 )
 
-            trade_id = generate_trade_id()
+            # Get the actual MT5 position ticket
+            # Try multiple approaches to ensure we get the real ticket
+            trade_id = None
+
+            # Method 1: Use the deal from order result (most reliable)
+            if result.deal and result.deal != 0:
+                # The deal can be used to find the position
+                try:
+                    import time
+                    # Small delay to let MT5 process the order
+                    time.sleep(0.1)
+                    positions = mt5.positions_get(symbol=symbol)
+                    if positions:
+                        # Find position by matching price and volume (most recent)
+                        best = min(
+                            positions,
+                            key=lambda p: abs(p.price_open - result.price) + abs(p.volume - lot_size)
+                        )
+                        trade_id = str(best.ticket)
+                        logger.debug(f"Got ticket {trade_id} from positions after deal {result.deal}")
+                except Exception as e:
+                    logger.debug(f"Could not get position from deal: {e}")
+
+            # Method 2: Retry with positions_get if method 1 failed
+            if not trade_id:
+                for retry in range(3):
+                    try:
+                        import time
+                        time.sleep(0.2)  # Wait a bit more
+                        positions = mt5.positions_get(symbol=symbol)
+                        if positions:
+                            best = min(
+                                positions,
+                                key=lambda p: abs(p.price_open - result.price) + abs(p.volume - lot_size)
+                            )
+                            trade_id = str(best.ticket)
+                            logger.debug(f"Got ticket {trade_id} on retry {retry+1}")
+                            break
+                    except Exception:
+                        pass
+
+            # Method 3: Fallback to generated ID (last resort)
+            if not trade_id:
+                trade_id = generate_trade_id()
+                logger.warning(f"Could not get MT5 ticket, using generated ID: {trade_id}")
             direction = "LONG" if units > 0 else "SHORT"
 
             logger.info(
                 f"Position opened: {instrument} {direction} "
                 f"{abs(units)} units @ {result.price}"
             )
+
+            try:
+                pip_divisor = get_pip_divisor(instrument, symbol_info_for_spread)
+                slippage_pips = abs(result.price - requested_price) / pip_divisor if pip_divisor else None
+                db.log_execution({
+                    "trade_id": trade_id,
+                    "order_id": str(result.order),
+                    "instrument": instrument,
+                    "side": direction,
+                    "requested_price": requested_price,
+                    "fill_price": result.price,
+                    "slippage_pips": round(slippage_pips, 2) if slippage_pips is not None else None,
+                    "spread_pips": round(spread_pips, 2),
+                    "notes": "OPEN"
+                })
+            except Exception as e:
+                logger.warning(f"Failed to log execution quality: {e}")
+
+            try:
+                db.log_trade({
+                    "trade_id": trade_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "instrument": instrument,
+                    "direction": direction,
+                    "entry_price": result.price,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "units": units,
+                    "risk_amount": risk_amount,
+                    "risk_percent": (risk_amount / equity) if (risk_amount is not None and equity) else None,
+                    "confidence_score": confidence,
+                    "notes": "MT5 order opened"
+                })
+            except Exception as e:
+                logger.warning(f"Failed to log trade to DB: {e}")
 
             return OrderResult(
                 success=True,
@@ -344,7 +447,8 @@ class OrderManager:
             # Capture position info before closing
             entry_price = pos.price_open
             direction = "LONG" if pos.type == mt5.ORDER_TYPE_BUY else "SHORT"
-            position_units = int(pos.volume * 100000)
+            contract_size = getattr(mt5.symbol_info(symbol), "trade_contract_size", 100000.0) or 100000.0
+            position_units = int(pos.volume * contract_size)
             ticket = pos.ticket
 
             # Determine close order type (opposite of position)
@@ -356,10 +460,11 @@ class OrderManager:
                 continue
 
             price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
+            requested_price = price
 
             # Calculate volume to close
             if units is not None:
-                close_volume = min(abs(units) / 100000.0, pos.volume)
+                close_volume = min(abs(units) / contract_size, pos.volume)
             else:
                 close_volume = pos.volume
 
@@ -404,8 +509,8 @@ class OrderManager:
 
                 # Call trade lifecycle handler (lazy import to avoid circular dependency)
                 try:
-                    from src.trading.trade_lifecycle import trade_closed_handler
-                    trade_closed_handler(
+                    from src.trading.trade_lifecycle import trade_closed_handler, record_trade_close
+                    close_result = trade_closed_handler(
                         trade_id=str(ticket),
                         instrument=instrument,
                         direction=direction,
@@ -415,6 +520,13 @@ class OrderManager:
                         pnl_percent=pnl_percent,
                         close_reason="MANUAL"
                     )
+                    if close_result and not close_result.get("trade_updated"):
+                        record_trade_close(
+                            instrument=instrument,
+                            exit_price=result.price,
+                            pnl=pnl,
+                            close_reason="MANUAL"
+                        )
                 except Exception as lifecycle_error:
                     logger.warning(f"Trade lifecycle handler error: {lifecycle_error}")
 
@@ -432,6 +544,25 @@ class OrderManager:
                         "pnl": pnl
                     }
                 ))
+
+                try:
+                    symbol_info_for_spread = mt5.symbol_info(symbol)
+                    pip_divisor = get_pip_divisor(instrument, symbol_info_for_spread)
+                    spread_pips = (tick.ask - tick.bid) / pip_divisor if pip_divisor else None
+                    slippage_pips = abs(result.price - requested_price) / pip_divisor if pip_divisor else None
+                    db.log_execution({
+                        "trade_id": str(pos.ticket),
+                        "order_id": str(result.order),
+                        "instrument": instrument,
+                        "side": "CLOSE",
+                        "requested_price": requested_price,
+                        "fill_price": result.price,
+                        "slippage_pips": round(slippage_pips, 2) if slippage_pips is not None else None,
+                        "spread_pips": round(spread_pips, 2) if spread_pips is not None else None,
+                        "notes": "CLOSE"
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to log execution quality (close): {e}")
 
             except Exception as e:
                 logger.error(f"Failed to close position: {e}")
@@ -567,7 +698,9 @@ class OrderManager:
             result = []
             for pos in positions:
                 instrument = self.client._convert_symbol_reverse(pos.symbol)
-                units = int(pos.volume * 100000)
+                symbol_info = mt5.symbol_info(pos.symbol)
+                contract_size = getattr(symbol_info, "trade_contract_size", 100000.0) if symbol_info else 100000.0
+                units = int(pos.volume * contract_size)
                 if pos.type == mt5.ORDER_TYPE_SELL:
                     units = -units
 
@@ -606,3 +739,101 @@ class OrderManager:
             trade_id=trade_id,
             stop_loss=entry_price
         )
+
+    def update_trailing_stop(
+        self,
+        trade_id: str,
+        instrument: str,
+        entry_price: float,
+        current_price: float,
+        direction: str,
+        atr_pips: float = 10.0,
+        breakeven_pips: float = 10.0,
+        trail_after_pips: float = 20.0,
+        trail_distance_atr: float = 1.5
+    ) -> Optional[OrderResult]:
+        """
+        Update trailing stop based on current profit.
+
+        Strategy:
+        1. Move to breakeven when profit >= breakeven_pips (default 10 = 1R)
+        2. Start trailing at trail_distance_atr * ATR when profit >= trail_after_pips (default 20 = 2R)
+
+        Args:
+            trade_id: MT5 position ticket
+            instrument: Currency pair
+            entry_price: Original entry price
+            current_price: Current market price
+            direction: "LONG" or "SHORT"
+            atr_pips: Current ATR in pips (for trail distance)
+            breakeven_pips: Pips profit to move to breakeven
+            trail_after_pips: Pips profit to start trailing
+            trail_distance_atr: Trail distance as multiple of ATR
+
+        Returns:
+            OrderResult if stop was modified, None if no modification needed
+        """
+        # Get pip value
+        pip_value = 0.0001 if "JPY" not in instrument else 0.01
+
+        # Calculate current profit in pips
+        if direction == "LONG":
+            profit_pips = (current_price - entry_price) / pip_value
+        else:
+            profit_pips = (entry_price - current_price) / pip_value
+
+        # Get current stop loss
+        positions = mt5.positions_get(ticket=int(trade_id))
+        if not positions:
+            return None
+
+        pos = positions[0]
+        current_sl = pos.sl
+
+        # Calculate trail distance
+        trail_distance = atr_pips * trail_distance_atr * pip_value
+
+        # Stage 1: Move to breakeven at 1R profit
+        if profit_pips >= breakeven_pips:
+            # Check if SL is not yet at breakeven
+            if direction == "LONG":
+                if current_sl < entry_price - pip_value:
+                    logger.info(f"Trade {trade_id}: Moving to breakeven ({profit_pips:.1f} pips profit)")
+                    return self.modify_position(
+                        instrument=instrument,
+                        trade_id=trade_id,
+                        stop_loss=entry_price
+                    )
+            else:  # SHORT
+                if current_sl > entry_price + pip_value or current_sl == 0:
+                    logger.info(f"Trade {trade_id}: Moving to breakeven ({profit_pips:.1f} pips profit)")
+                    return self.modify_position(
+                        instrument=instrument,
+                        trade_id=trade_id,
+                        stop_loss=entry_price
+                    )
+
+        # Stage 2: Start trailing at 2R profit
+        if profit_pips >= trail_after_pips:
+            if direction == "LONG":
+                new_sl = current_price - trail_distance
+                # Only move SL up, never down
+                if new_sl > current_sl:
+                    logger.info(f"Trade {trade_id}: Trailing stop to {new_sl:.5f} ({profit_pips:.1f} pips profit)")
+                    return self.modify_position(
+                        instrument=instrument,
+                        trade_id=trade_id,
+                        stop_loss=new_sl
+                    )
+            else:  # SHORT
+                new_sl = current_price + trail_distance
+                # Only move SL down, never up (for shorts)
+                if current_sl == 0 or new_sl < current_sl:
+                    logger.info(f"Trade {trade_id}: Trailing stop to {new_sl:.5f} ({profit_pips:.1f} pips profit)")
+                    return self.modify_position(
+                        instrument=instrument,
+                        trade_id=trade_id,
+                        stop_loss=new_sl
+                    )
+
+        return None  # No modification needed

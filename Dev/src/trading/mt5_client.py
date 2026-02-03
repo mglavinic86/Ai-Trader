@@ -14,7 +14,7 @@ Usage:
 """
 
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import MetaTrader5 as mt5
 
 from src.utils.config import config
@@ -202,8 +202,8 @@ class MT5Client:
             - unrealized_pl: Unrealized P/L
             - nav: Equity (NAV)
         """
-        if not self._connected:
-            raise MT5Error("Not connected to MT5")
+        if not self._ensure_connected():
+            raise MT5Error("Not connected to MT5 and reconnect failed")
 
         account_info = mt5.account_info()
         if account_info is None:
@@ -251,8 +251,8 @@ class MT5Client:
             - tradeable: Whether pair is tradeable
             - time: Price timestamp
         """
-        if not self._connected:
-            raise MT5Error("Not connected to MT5")
+        if not self._ensure_connected():
+            raise MT5Error("Not connected to MT5 and reconnect failed")
 
         symbol = self._convert_symbol(instrument)
 
@@ -342,8 +342,8 @@ class MT5Client:
             - volume: Tick volume
             - complete: Whether candle is complete
         """
-        if not self._connected:
-            raise MT5Error("Not connected to MT5")
+        if not self._ensure_connected():
+            raise MT5Error("Not connected to MT5 and reconnect failed")
 
         symbol = self._convert_symbol(instrument)
         timeframe = self._convert_timeframe(granularity)
@@ -386,8 +386,8 @@ class MT5Client:
         Returns:
             List of position dicts
         """
-        if not self._connected:
-            raise MT5Error("Not connected to MT5")
+        if not self._ensure_connected():
+            raise MT5Error("Not connected to MT5 and reconnect failed")
 
         positions = mt5.positions_get()
 
@@ -398,11 +398,13 @@ class MT5Client:
         for pos in positions:
             instrument = self._convert_symbol_reverse(pos.symbol)
             is_long = pos.type == mt5.ORDER_TYPE_BUY
+            symbol_info = mt5.symbol_info(pos.symbol)
+            contract_size = getattr(symbol_info, "trade_contract_size", 100000.0) if symbol_info else 100000.0
 
             result.append({
                 "instrument": instrument,
-                "long_units": int(pos.volume * 100000) if is_long else 0,
-                "short_units": int(pos.volume * 100000) if not is_long else 0,
+                "long_units": int(pos.volume * contract_size) if is_long else 0,
+                "short_units": int(pos.volume * contract_size) if not is_long else 0,
                 "unrealized_pl": pos.profit,
                 "direction": "LONG" if is_long else "SHORT",
                 "ticket": pos.ticket,
@@ -418,6 +420,40 @@ class MT5Client:
     # ===================
     # Utility Methods
     # ===================
+
+    def reconnect(self) -> bool:
+        """
+        Force reconnection to MT5.
+
+        Use this when MT5 terminal was restarted.
+
+        Returns:
+            True if reconnected successfully
+        """
+        logger.info("Forcing MT5 reconnection...")
+        mt5.shutdown()
+        self._connected = False
+        return self._connect()
+
+    def _ensure_connected(self) -> bool:
+        """
+        Ensure MT5 is connected, reconnect if needed.
+
+        Returns:
+            True if connected
+        """
+        if self._connected:
+            # Verify connection is still valid
+            try:
+                account = mt5.account_info()
+                if account is not None:
+                    return True
+            except Exception:
+                pass
+
+        # Connection lost, try to reconnect
+        logger.warning("MT5 connection lost, attempting reconnect...")
+        return self.reconnect()
 
     def is_connected(self) -> bool:
         """
@@ -462,6 +498,168 @@ class MT5Client:
             return info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL
         except Exception:
             return False
+
+    # ===================
+    # History Methods
+    # ===================
+
+    def get_history(
+        self,
+        days: int = 30,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None
+    ) -> list[dict]:
+        """
+        Get closed trade history from MT5.
+
+        Fetches deals from MT5 history and groups them into complete trades
+        (entry + exit). Each returned trade represents a fully closed position.
+
+        Args:
+            days: Number of days to fetch (default 30)
+            from_date: Start date (overrides days if provided)
+            to_date: End date (defaults to now)
+
+        Returns:
+            List of closed trade dicts with:
+            - trade_id: MT5 position ticket (string)
+            - instrument: Currency pair (OANDA format)
+            - direction: LONG or SHORT
+            - entry_price: Entry price
+            - exit_price: Exit price
+            - units: Position size
+            - volume: Lot size
+            - pnl: Realized P/L
+            - pnl_percent: P/L as percentage of entry value
+            - opened_at: Entry timestamp (ISO format)
+            - closed_at: Exit timestamp (ISO format)
+            - stop_loss: SL price if set
+            - take_profit: TP price if set
+            - commission: Total commission
+            - swap: Swap charges
+            - comment: Trade comment
+        """
+        if not self._ensure_connected():
+            raise MT5Error("Not connected to MT5 and reconnect failed")
+
+        # Set date range
+        if to_date is None:
+            to_date = datetime.now(timezone.utc)
+        if from_date is None:
+            from_date = to_date - timedelta(days=days)
+
+        # Ensure timezone aware
+        if from_date.tzinfo is None:
+            from_date = from_date.replace(tzinfo=timezone.utc)
+        if to_date.tzinfo is None:
+            to_date = to_date.replace(tzinfo=timezone.utc)
+
+        # Fetch deals from MT5
+        deals = mt5.history_deals_get(from_date, to_date)
+
+        if deals is None or len(deals) == 0:
+            logger.info("No trade history found in MT5")
+            return []
+
+        # Group deals by position_id
+        # Each position has entry deal(s) and exit deal(s)
+        positions = {}
+
+        for deal in deals:
+            pos_id = deal.position_id
+            if pos_id == 0:
+                # Skip balance operations, deposits, etc.
+                continue
+
+            if pos_id not in positions:
+                positions[pos_id] = {
+                    "entries": [],
+                    "exits": [],
+                    "symbol": deal.symbol,
+                    "commission": 0.0,
+                    "swap": 0.0,
+                    "comment": deal.comment or ""
+                }
+
+            # DEAL_ENTRY_IN = 0 (entry), DEAL_ENTRY_OUT = 1 (exit)
+            if deal.entry == 0:  # Entry
+                positions[pos_id]["entries"].append(deal)
+            elif deal.entry == 1:  # Exit
+                positions[pos_id]["exits"].append(deal)
+
+            positions[pos_id]["commission"] += deal.commission
+            positions[pos_id]["swap"] += deal.swap
+
+        # Build closed trades list
+        closed_trades = []
+
+        for pos_id, pos_data in positions.items():
+            if not pos_data["entries"] or not pos_data["exits"]:
+                # Position not fully closed yet
+                continue
+
+            # Calculate weighted average entry price
+            total_entry_volume = sum(d.volume for d in pos_data["entries"])
+            if total_entry_volume == 0:
+                continue
+
+            entry_price = sum(d.price * d.volume for d in pos_data["entries"]) / total_entry_volume
+
+            # Calculate weighted average exit price
+            total_exit_volume = sum(d.volume for d in pos_data["exits"])
+            exit_price = sum(d.price * d.volume for d in pos_data["exits"]) / total_exit_volume if total_exit_volume > 0 else 0
+
+            # Get first entry and last exit for timestamps
+            first_entry = min(pos_data["entries"], key=lambda d: d.time)
+            last_exit = max(pos_data["exits"], key=lambda d: d.time)
+
+            # Determine direction from first entry deal type
+            # DEAL_TYPE_BUY = 0, DEAL_TYPE_SELL = 1
+            is_long = first_entry.type == 0
+
+            # Calculate P/L (sum of all deal profits)
+            total_pnl = sum(d.profit for d in pos_data["exits"])
+            total_pnl += pos_data["commission"] + pos_data["swap"]
+
+            # Convert symbol
+            instrument = self._convert_symbol_reverse(pos_data["symbol"])
+
+            # Get symbol info for contract size
+            symbol_info = mt5.symbol_info(pos_data["symbol"])
+            contract_size = getattr(symbol_info, "trade_contract_size", 100000.0) if symbol_info else 100000.0
+            units = int(total_entry_volume * contract_size)
+            if not is_long:
+                units = -units
+
+            # Calculate P/L percent (relative to position value)
+            position_value = abs(units) * entry_price
+            pnl_percent = (total_pnl / position_value * 100) if position_value > 0 else 0
+
+            closed_trades.append({
+                "trade_id": str(pos_id),
+                "instrument": instrument,
+                "direction": "LONG" if is_long else "SHORT",
+                "entry_price": round(entry_price, 5),
+                "exit_price": round(exit_price, 5),
+                "units": units,
+                "volume": round(total_entry_volume, 2),
+                "pnl": round(total_pnl, 2),
+                "pnl_percent": round(pnl_percent, 4),
+                "opened_at": datetime.fromtimestamp(first_entry.time, tz=timezone.utc).isoformat(),
+                "closed_at": datetime.fromtimestamp(last_exit.time, tz=timezone.utc).isoformat(),
+                "stop_loss": None,  # Not available in deal history
+                "take_profit": None,
+                "commission": round(pos_data["commission"], 2),
+                "swap": round(pos_data["swap"], 2),
+                "comment": pos_data["comment"],
+                "source": "MT5_SYNC"
+            })
+
+        # Sort by close time
+        closed_trades.sort(key=lambda t: t["closed_at"])
+
+        logger.info(f"Found {len(closed_trades)} closed trades in MT5 history")
+        return closed_trades
 
     def shutdown(self):
         """Disconnect from MT5."""

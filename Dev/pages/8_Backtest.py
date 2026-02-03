@@ -357,6 +357,65 @@ def main():
                 step=0.5
             )
 
+        st.divider()
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            spread_pips = st.number_input(
+                "Avg Spread (pips)",
+                min_value=0.0,
+                max_value=10.0,
+                value=1.2,
+                step=0.1,
+                help="Average spread applied to entries/exits"
+            )
+
+        with col2:
+            slippage_pips = st.number_input(
+                "Slippage (pips)",
+                min_value=0.0,
+                max_value=5.0,
+                value=0.2,
+                step=0.1,
+                help="Adverse slippage per side"
+            )
+
+        with col3:
+            commission_per_lot = st.number_input(
+                "Commission (per lot, round-turn)",
+                min_value=0.0,
+                max_value=50.0,
+                value=7.0,
+                step=0.5,
+                help="Round-turn commission per lot"
+            )
+
+        st.divider()
+
+        limit_sessions = st.checkbox(
+            "Limit entries to trading sessions (UTC)",
+            value=True
+        )
+
+        session_options = {
+            "Tokyo (00-09)": (0, 9),
+            "London (07-16)": (7, 16),
+            "New York (12-21)": (12, 21),
+            "Sydney (21-06)": (21, 6),
+        }
+
+        selected_sessions = st.multiselect(
+            "Sessions",
+            list(session_options.keys()),
+            default=["London (07-16)", "New York (12-21)"]
+        )
+
+        allow_weekends = st.checkbox(
+            "Allow weekend entries",
+            value=False
+        )
+
     # Validate dates
     if start_date >= end_date:
         st.error("Start date must be before end date")
@@ -388,7 +447,14 @@ def main():
             use_adversarial=use_adversarial,
             lookback_bars=lookback_bars,
             atr_sl_mult=atr_sl_mult,
-            atr_tp_mult=atr_tp_mult
+            atr_tp_mult=atr_tp_mult,
+            spread_pips=spread_pips,
+            slippage_pips=slippage_pips,
+            commission_per_lot=commission_per_lot,
+            limit_sessions=limit_sessions,
+            selected_sessions=selected_sessions,
+            session_options=session_options,
+            allow_weekends=allow_weekends
         )
 
     # Display results if available
@@ -430,6 +496,13 @@ def run_backtest(**params):
         # Step 2: Run backtest
         status_text.text("Running backtest simulation...")
 
+        session_hours = None
+        if params.get("limit_sessions"):
+            session_hours = []
+            for label in params.get("selected_sessions", []):
+                if label in params.get("session_options", {}):
+                    session_hours.append(params["session_options"][label])
+
         config = BacktestConfig(
             instrument=params["instrument"],
             timeframe=params["timeframe"],
@@ -441,6 +514,11 @@ def run_backtest(**params):
             lookback_bars=params["lookback_bars"],
             atr_sl_multiplier=params["atr_sl_mult"],
             atr_tp_multiplier=params["atr_tp_mult"],
+            spread_pips=params.get("spread_pips", 1.2),
+            slippage_pips=params.get("slippage_pips", 0.2),
+            commission_per_lot=params.get("commission_per_lot", 7.0),
+            session_hours=session_hours,
+            allow_weekends=params.get("allow_weekends", False)
         )
 
         engine = BacktestEngine()

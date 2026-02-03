@@ -11,6 +11,8 @@ from src.utils.helpers import (
     risk_tier_for_confidence
 )
 from src.utils.database import db, Database
+# Note: mt5_sync has circular import with trading module
+# Import directly: from src.utils.mt5_sync import sync_mt5_history
 
 __all__ = [
     # Config

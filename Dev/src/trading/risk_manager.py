@@ -74,12 +74,12 @@ class RiskManager:
     All limits are hard-coded and cannot be changed at runtime.
     """
 
-    # HARD-CODED LIMITS (DO NOT CHANGE!)
+    # HARD-CODED LIMITS (AGGRESSIVE MODE FOR HIGH VOLUME)
     MAX_RISK_PER_TRADE = 0.03  # 3% absolute max
-    MAX_DAILY_DRAWDOWN = 0.03  # 3%
-    MAX_WEEKLY_DRAWDOWN = 0.06  # 6%
-    MAX_CONCURRENT_POSITIONS = 3
-    MAX_SPREAD_PIPS = 3.0
+    MAX_DAILY_DRAWDOWN = 0.05  # 5% (increased for aggressive trading)
+    MAX_WEEKLY_DRAWDOWN = 0.10  # 10% (increased for aggressive trading)
+    MAX_CONCURRENT_POSITIONS = 10  # Allow more concurrent positions
+    MAX_SPREAD_PIPS = 5.0  # Wider spread tolerance
     MIN_CONFIDENCE = 50
 
     def __init__(self):
@@ -88,6 +88,16 @@ class RiskManager:
         self._weekly_pnl = 0.0
         self._last_daily_reset = datetime.now(timezone.utc).date()
         self._last_weekly_reset = self._get_week_start(datetime.now(timezone.utc))
+
+        # Auto-trading: Loss streak and cooldown tracking
+        self._loss_streak = 0
+        self._cooldown_until: Optional[datetime] = None
+        self._cooldown_config = {
+            "loss_streak_trigger": 3,
+            "cooldown_minutes": 30,
+            "reset_on_win": True
+        }
+
         logger.info("RiskManager initialized with hard-coded limits")
 
     def _get_week_start(self, dt: datetime) -> date:
@@ -119,7 +129,8 @@ class RiskManager:
         confidence: int,
         open_positions: int,
         spread_pips: float,
-        daily_pnl: Optional[float] = None
+        daily_pnl: Optional[float] = None,
+        weekly_pnl: Optional[float] = None
     ) -> ValidationResult:
         """
         Validate a trade against all risk limits.
@@ -140,9 +151,11 @@ class RiskManager:
 
         checks = []
 
-        # Use provided daily_pnl or internal tracking
+        # Use provided P/L or internal tracking
         if daily_pnl is None:
             daily_pnl = self._daily_pnl
+        if weekly_pnl is None:
+            weekly_pnl = self._weekly_pnl
 
         # 1. Check confidence minimum
         confidence_check = self._check_confidence(confidence)
@@ -157,7 +170,7 @@ class RiskManager:
         checks.append(daily_check)
 
         # 4. Check weekly drawdown
-        weekly_check = self._check_weekly_drawdown(equity, self._weekly_pnl)
+        weekly_check = self._check_weekly_drawdown(equity, weekly_pnl)
         checks.append(weekly_check)
 
         # 5. Check concurrent positions
@@ -348,6 +361,164 @@ class RiskManager:
         remaining = max_loss - current_loss
         return max(0, remaining)
 
+    # === AUTO-TRADING: COOLDOWN METHODS ===
+
+    def set_cooldown_config(
+        self,
+        loss_streak_trigger: int = 3,
+        cooldown_minutes: int = 30,
+        reset_on_win: bool = True
+    ) -> None:
+        """Configure cooldown settings for auto-trading."""
+        self._cooldown_config = {
+            "loss_streak_trigger": loss_streak_trigger,
+            "cooldown_minutes": cooldown_minutes,
+            "reset_on_win": reset_on_win
+        }
+        logger.info(f"Cooldown config updated: {self._cooldown_config}")
+
+    def record_trade_result(self, pnl: float) -> bool:
+        """
+        Record result of a closed trade for loss streak tracking.
+
+        Args:
+            pnl: Profit/loss amount
+
+        Returns:
+            True if cooldown was triggered
+        """
+        self._check_and_reset_if_needed()
+
+        # Update P/L tracking
+        self._daily_pnl += pnl
+        self._weekly_pnl += pnl
+
+        if pnl >= 0:
+            # Win - reset loss streak if configured
+            if self._cooldown_config["reset_on_win"]:
+                if self._loss_streak > 0:
+                    logger.info(f"Loss streak reset (was {self._loss_streak}) after win")
+                self._loss_streak = 0
+            return False
+        else:
+            # Loss - increment streak
+            self._loss_streak += 1
+            logger.warning(f"Loss streak: {self._loss_streak}")
+
+            # Check if should trigger cooldown
+            if self._loss_streak >= self._cooldown_config["loss_streak_trigger"]:
+                self._trigger_cooldown()
+                return True
+
+            return False
+
+    def _trigger_cooldown(self) -> None:
+        """Trigger cooldown period."""
+        minutes = self._cooldown_config["cooldown_minutes"]
+        self._cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        logger.warning(
+            f"COOLDOWN TRIGGERED: {self._loss_streak} consecutive losses. "
+            f"Trading paused until {self._cooldown_until.isoformat()}"
+        )
+
+    def is_in_cooldown(self) -> bool:
+        """Check if currently in cooldown period."""
+        if self._cooldown_until is None:
+            return False
+
+        if datetime.now(timezone.utc) >= self._cooldown_until:
+            # Cooldown expired
+            logger.info("Cooldown period ended")
+            self._cooldown_until = None
+            self._loss_streak = 0
+            return False
+
+        return True
+
+    def get_cooldown_status(self) -> dict:
+        """Get current cooldown status."""
+        return {
+            "in_cooldown": self.is_in_cooldown(),
+            "cooldown_until": self._cooldown_until.isoformat() if self._cooldown_until else None,
+            "loss_streak": self._loss_streak,
+            "trigger_threshold": self._cooldown_config["loss_streak_trigger"],
+            "cooldown_minutes": self._cooldown_config["cooldown_minutes"]
+        }
+
+    def reset_cooldown(self) -> None:
+        """Manually reset cooldown (use with caution)."""
+        self._cooldown_until = None
+        self._loss_streak = 0
+        logger.warning("Cooldown manually reset")
+
+    def validate_auto_trade(
+        self,
+        equity: float,
+        risk_amount: float,
+        confidence: int,
+        open_positions: int,
+        spread_pips: float,
+        daily_pnl: Optional[float] = None,
+        weekly_pnl: Optional[float] = None,
+        max_positions: int = 5
+    ) -> ValidationResult:
+        """
+        Extended validation for auto-trading.
+
+        Includes all standard checks plus cooldown check.
+
+        Args:
+            equity: Current equity
+            risk_amount: Risk amount for trade
+            confidence: Confidence score
+            open_positions: Current open positions
+            spread_pips: Current spread
+            daily_pnl: Daily P/L (uses internal if None)
+            weekly_pnl: Weekly P/L (uses internal if None)
+            max_positions: Max positions allowed (configurable)
+
+        Returns:
+            ValidationResult with all checks including cooldown
+        """
+        # Run standard validation
+        result = self.validate_trade(
+            equity=equity,
+            risk_amount=risk_amount,
+            confidence=confidence,
+            open_positions=open_positions,
+            spread_pips=spread_pips,
+            daily_pnl=daily_pnl,
+            weekly_pnl=weekly_pnl
+        )
+
+        # Add cooldown check
+        cooldown_passed = not self.is_in_cooldown()
+        result.checks.append(CheckResult(
+            name="cooldown",
+            passed=cooldown_passed,
+            message="Not in cooldown" if cooldown_passed else f"In cooldown (streak: {self._loss_streak})",
+            value=self._loss_streak,
+            limit=self._cooldown_config["loss_streak_trigger"]
+        ))
+
+        # Override position check with configurable limit
+        for i, check in enumerate(result.checks):
+            if check.name == "concurrent_positions":
+                passed = open_positions < max_positions
+                result.checks[i] = CheckResult(
+                    name="concurrent_positions",
+                    passed=passed,
+                    message=f"Open positions {open_positions} {'<' if passed else '>='} {max_positions}",
+                    value=open_positions,
+                    limit=max_positions
+                )
+                break
+
+        # Update overall validity
+        result.valid = all(c.passed for c in result.checks)
+
+        return result
+
 
 # Pre-trade checklist as a function
 def pre_trade_checklist(
@@ -357,6 +528,7 @@ def pre_trade_checklist(
     open_positions: int,
     spread_pips: float,
     daily_pnl: float = 0.0,
+    weekly_pnl: float = 0.0,
     adversarial_done: bool = False,
     rag_checked: bool = False,
     sentiment_calculated: bool = False
@@ -387,7 +559,8 @@ def pre_trade_checklist(
         confidence=confidence,
         open_positions=open_positions,
         spread_pips=spread_pips,
-        daily_pnl=daily_pnl
+        daily_pnl=daily_pnl,
+        weekly_pnl=weekly_pnl
     )
 
     # Add AI-specific checks

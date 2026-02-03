@@ -33,7 +33,10 @@ from typing import Optional
 from src.utils.logger import logger
 from src.utils.database import db
 from src.core.settings_manager import settings_manager
-from src.analysis.error_analyzer import ErrorAnalyzer, ErrorCategory
+from src.analysis.error_analyzer import ErrorAnalyzer, ErrorCategory, build_lesson_prompt
+from src.analysis.llm_engine import LLMEngine
+from src.analysis.post_trade_analyzer import PostTradeAnalyzer
+from src.analysis.learning_engine import learning_engine
 
 
 def trade_closed_handler(
@@ -97,6 +100,7 @@ def trade_closed_handler(
         "trade_updated": False,
         "error_logged": False,
         "lesson_added": False,
+        "learning_updated": False,
         "error_category": None
     }
 
@@ -181,13 +185,61 @@ def trade_closed_handler(
 
             # === STEP 4: Add lesson to knowledge base if significant ===
             if analysis.should_add_lesson and analysis.lesson_text:
-                settings_manager.add_lesson(analysis.lesson_text)
+                lesson_text = analysis.lesson_text
+
+                # Optional: LLM-improved lesson
+                llm_engine = LLMEngine()
+                if llm_engine.is_available():
+                    prompt = build_lesson_prompt(trade_data, market_context, analysis)
+                    llm_lesson = llm_engine.generate_lesson(prompt)
+                    if llm_lesson:
+                        lesson_text = llm_lesson
+
+                settings_manager.add_lesson(lesson_text)
                 result["lesson_added"] = True
 
                 logger.info(
                     f"Lesson added to knowledge base for {instrument} "
                     f"({analysis.category.value})"
                 )
+
+        # === STEP 5: Run Post-Trade Analysis and Learning (for ALL trades) ===
+        try:
+            # Get full trade data from DB
+            trade_record = db.get_trade(trade_id)
+            if trade_record:
+                trade_data = {
+                    "trade_id": trade_id,
+                    "instrument": instrument,
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "stop_loss": trade_record.get("stop_loss"),
+                    "take_profit": trade_record.get("take_profit"),
+                    "pnl": pnl,
+                    "opened_at": trade_record.get("timestamp"),
+                    "closed_at": trade_record.get("closed_at") or datetime.now().isoformat()
+                }
+
+                # Run post-trade analysis
+                analyzer = PostTradeAnalyzer()
+                post_analysis = analyzer.analyze_trade(trade_data)
+
+                # Feed to learning engine
+                learn_result = learning_engine.learn_from_trade(trade_data, post_analysis)
+
+                result["learning_updated"] = learn_result.get("analysis_saved", False)
+                patterns_updated = learn_result.get("patterns_updated", 0)
+
+                logger.info(
+                    f"Learning updated for {trade_id}: {post_analysis.outcome.value}, "
+                    f"{patterns_updated} patterns updated"
+                )
+            else:
+                logger.warning(f"Trade {trade_id} not found for learning analysis")
+
+        except Exception as learn_error:
+            logger.warning(f"Learning analysis failed for {trade_id}: {learn_error}")
 
         result["success"] = True
 

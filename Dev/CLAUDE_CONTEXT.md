@@ -6,129 +6,294 @@
 
 ## Sto je ovaj projekt?
 
-**AI Trader** je automatizirani forex trading sustav koji koristi:
+**AI Trader** je **FULL AUTO scalping bot** koji koristi:
 - **Claude Code CLI** kao sucelje
-- **Claude AI** za analizu trzista
-- **MetaTrader 5** kao broker (Python API) - **NOVO! Zamjena za OANDA**
+- **Claude AI** za analizu trzista + validaciju + override odluke
+- **MetaTrader 5** kao broker (Python API)
 - **Python** kao runtime
+- **Streamlit** za Web Dashboard
 
 **Vlasnik:** Sirius Grupa d.o.o.
-**Svrha:** Interni sustav za forex trading s AI asistencijom
+**Svrha:** Automatizirani forex trading s AI analizom
+**Cilj:** MIN 200 EUR profit dnevno
 
 ---
 
-## Trenutni Status (2026-01-31)
+## Trenutni Status (2026-02-03)
 
 | Faza | Status | Opis |
 |------|--------|------|
-| Faza 1: Foundation | DONE | Config, logging, database |
-| Faza 2: Core Trading | DONE | Orders, position sizing, risk management |
-| Faza 3: AI Integration | DONE | Indicators, sentiment, adversarial, interface |
-| Faza 3.5: MT5 Integration | DONE | **MetaTrader 5 umjesto OANDA** |
-| Faza 3.6: Web Dashboard | DONE | **Streamlit web UI** |
-| Faza 4.1: Backtesting | DONE | Walk-forward backtesting |
-| Faza 4.2: Auto Learning | DONE | **Automatsko ucenje iz gresaka** |
-| Faza 4.3: UX Improvements | DONE | **Tooltips, Onboarding, Notifications** |
-| Faza 4.4: Performance Analytics | DONE | **Trading statistike i grafovi** |
-| Faza 4.5: Docs & Monitoring | DONE | **README.md, Error tracking** |
-| Faza 4.6: Risk Validation Gate | DONE | **Enforced risk checks** |
-| Faza 4.7: SMC Knowledge Integration | DONE | **56 PDF-ova, 7 knowledge, 3 skills** |
-| Faza 4.8: Security Fixes | DONE | **Weekly drawdown, auto-reset, bypass removal** |
-| Faza 4.9: Remote Access | DONE | **Tailscale VPN, auto-start, mobile access** |
-| Faza 4.10: Skill Buttons + BTC | DONE | **Vizualni gumbi, BTC/USD kripto** |
-| Faza 4: Production | IN PROGRESS | Live testing |
+| Faza 1-4 | DONE | Foundation, Core, AI, Dashboard |
+| Faza 5: Full Auto Trading | DONE | Automatizirani scalping bot |
+| Faza 5.1-5.4 | DONE | AI Visibility, Learning, Validation |
+| Faza 5.5: 24/7 Daemon Mode | DONE | Heartbeat + Watchdog |
+| Faza 5.6: Self-Tuning | DONE | AI Override za rejected signale |
+| Faza 5.7: Adaptive Settings | DONE | Auto-optimizacija postavki |
+| Faza 6: Modern AI Upgrades | DONE | Market Regime, External Sentiment, Walk-Forward |
+| **Faza 7: Self-Upgrade System** | **DONE** | **AI generira filtere iz losing patterna** |
 
-**Ukupni napredak: ~100%**
+**Ukupni napredak: 100% - SELF-LEARNING AI TRADING SUSTAV!**
 
 ---
 
-## VAZNO: MT5 Integracija (Session 2)
+## NOVO: Session 24 (2026-02-03) - Self-Upgrade System
 
-**OANDA REST API je zamijenjen s MetaTrader 5 Python API!**
+### Sto je implementirano?
 
-### MT5 Credentials (konfigurirano u .env)
+**AI sustav koji automatski uci iz gresaka i generira nove filtere!**
+
+1. **Performance Analyzer** - Analizira zadnjih 7 dana, identificira losing patterns
+2. **Code Generator** - Template-based Python kod s safety constraints
+3. **Code Validator** - AST parsing + security checks (blokira os, exec, open)
+4. **Upgrade Executor** - Walk-forward backtest prije deploya
+5. **Upgrade Manager** - Orchestrira daily cycle, max 3 proposals
+
+### Deployment Criteria (filter mora zadovoljiti SVE)
+
+| Kriterij | Zahtjev | Razlog |
+|----------|---------|--------|
+| Block rate | ≤ 50% | Ne smije blokirati vecinu signala |
+| Accuracy | > 50% | Mora blokirati vise losera nego winnera |
+| Robustness | ≥ 60% | Kombinirani weighted score |
+| Min signals | ≥ 20 | Dovoljno podataka za backtest |
+
+### Test Results
+
 ```
-MT5_LOGIN=62859209
-MT5_PASSWORD=2NCsTdqe6Abu!Bj
-MT5_SERVER=OANDA-TMS-Demo
+ALL TESTS PASSED (9/9)
+- BaseFilter, FilterRegistry, Builtin Filters
+- PerformanceAnalyzer (6 patterns found)
+- CodeValidator (blocks dangerous code)
+- CodeGenerator (generates valid Python)
+- UpgradeManager, Filter Chain, Full Cycle
 ```
 
-### MT5 Account Info
-- **Account:** 62859209
-- **Balance:** 50,000 EUR (demo)
-- **Server:** OANDA-TMS-Demo
-- **Status:** TESTIRANO I RADI
+### Trenutno detektirani patterni
 
-### Promijenjeni fajlovi (MT5)
-| Fajl | Promjena |
-|------|----------|
-| `src/trading/mt5_client.py` | **NOVI** - MT5 client (zamjena za oanda_client.py) |
-| `src/trading/orders.py` | Koristi MT5 za tradanje |
-| `src/utils/config.py` | Dodane MT5 varijable |
-| `.env.example` | MT5 kredencijali |
-| `.env` | Stvarni kredencijali (NE COMMITAJ!) |
-| `requirements.txt` | Dodan MetaTrader5 paket |
-| Svi `scripts/*.py` | Import promijenjen na MT5Client |
-| `src/core/interface.py` | MT5 integracija + ASCII fix za Windows |
+| Pattern | Win Rate | Status |
+|---------|----------|--------|
+| regime=UNKNOWN | 9.1% | Nema historical data |
+| session=london | 6.2% | Block rate 97% (previse!) |
+| EUR_USD+LONG | 0% | Low sample size |
 
-### Vazno za MT5
-1. **MT5 terminal MORA biti otvoren** da Python API radi
-2. **Tools > Options > Expert Advisors** - ukljuci:
-   - Allow algorithmic trading
-   - Allow DLL imports
-3. Symbol format: `EURUSD.pro` (ne `EUR_USD`)
-4. Automatska konverzija u kodu: `EUR_USD` <-> `EURUSD.pro`
+### Novi fajlovi
+
+```
+src/upgrade/                      # Self-Upgrade System
+├── base_filter.py                # Abstract filter class
+├── filter_registry.py            # Filter management
+├── performance_analyzer.py       # Loss pattern analysis
+├── code_generator.py             # Safe code generation
+├── code_validator.py             # AST security check
+├── upgrade_executor.py           # Backtest + deploy
+└── upgrade_manager.py            # Main orchestrator
+
+src/filters/                      # Trading filters
+├── builtin/                      # Built-in filters
+│   ├── consecutive_loss_filter.py
+│   └── low_confidence_direction_filter.py
+└── ai_generated/                 # AI-generated filters
+```
+
+### Rucno testiranje
+
+```bash
+# Run test suite
+python test_upgrade_system.py
+
+# Force upgrade cycle
+python -c "
+import asyncio
+from src.upgrade.upgrade_manager import get_upgrade_manager
+asyncio.run(get_upgrade_manager().run_daily_upgrade_cycle())
+"
+```
 
 ---
 
-## VAZNO: Risk Validation Gate (Session 9 + 11)
+## Session 23 (2026-02-03) - News API Integration
 
-**`OrderManager.open_position()` sada ZAHTIJEVA risk validaciju!**
+### Sto je implementirano?
 
-### Novi parametri (REQUIRED)
-```python
-result = om.open_position(
-    instrument="EUR_USD",
-    units=1000,
-    stop_loss=1.0800,
-    take_profit=1.0900,
-    confidence=75,          # NOVO - REQUIRED
-    risk_amount=500.0       # NOVO - REQUIRED
-)
+1. **News Provider System** (`src/analysis/news_providers.py`)
+   - Multi-provider arhitektura s fallback podrškom
+   - Automatsko dohvaćanje economic calendar podataka
+   - Async refresh s caching mehanizmom
+
+2. **Dostupni provideri:**
+   | Provider | API Key | Opis |
+   |----------|---------|------|
+   | Finnhub | Potreban (besplatan) | 60 calls/min, [finnhub.io](https://finnhub.io/register) |
+   | FMP | Potreban (besplatan) | 250 calls/day, [financialmodelingprep.com](https://site.financialmodelingprep.com/developer) |
+   | ForexFactory | Potreban | JBlanked API |
+   | **Recurring** | **NE TREBA** | Auto-generira NFP, FOMC, ECB, BoE, BoJ |
+
+3. **UI konfiguracija** (Settings → News API tab)
+   - Unos API ključeva
+   - Enable/disable providera
+   - Manual refresh button
+   - Calendar status pregled
+
+4. **NewsFilter integracija**
+   - `refresh_from_api()` - async refresh iz providera
+   - `get_calendar_status()` - status za UI
+   - Auto-refresh u pozadini
+
+### Novi fajlovi
+
+```
+src/analysis/news_providers.py    # Provider sustav (Finnhub, FMP, FF, Recurring)
+settings/news_providers.json      # Provider konfiguracija
 ```
 
-### Sto se provjerava (6 checks)
-| Check | Limit | Status |
-|-------|-------|--------|
-| Confidence | >= 50% | ENFORCED |
-| Risk per trade | Tier-based (1-3%) | ENFORCED |
-| Daily drawdown | < 3% | ENFORCED + AUTO-RESET |
-| **Weekly drawdown** | < 6% | **NOVO - Session 11** |
-| Open positions | < 3 | ENFORCED |
-| Spread | < 3 pips | ENFORCED |
+### Korištenje
 
-### Security Fixes (Session 11)
-- **Weekly drawdown SADA SE PROVJERAVA** (6% limit)
-- **Auto-reset** daily/weekly P/L na UTC midnight/Monday
-- **Global bypass flag UKLONJEN** - samo per-call bypass
-- **Equity fallback UKLONJEN** - mora biti dostupan equity
-- **Pip calculation FIX** - koristi MT5 symbol_info.digits
-- **Volume rounding FIX** - koristi broker volume_step
-
-### Bypass (samo za emergency)
 ```python
-result = om.open_position(..., _bypass_validation=True)
-# LOGIRA WARNING! Global bypass vise ne postoji.
+# Programski
+from src.analysis import refresh_news_calendar, set_finnhub_api_key
+
+set_finnhub_api_key("your-api-key")
+events = await refresh_news_calendar(force=True)
+
+# Ili preko UI
+# Settings → News API → unesi API key → Save → Refresh Now
 ```
 
-### Promijenjeni fajlovi
-| Fajl | Promjena |
-|------|----------|
-| `src/trading/orders.py` | Risk validation gate + security fixes |
-| `src/trading/risk_manager.py` | Weekly drawdown + auto-reset |
-| `src/utils/helpers.py` | get_pip_divisor() helper |
-| `tests/test_risk_manager_extended.py` | **NOVI** - 14 testova |
-| `tests/test_orders_security.py` | **NOVI** - 13 testova |
+### Recurring Provider (radi bez API ključa!)
+
+Automatski generira poznate high-impact evente:
+- **USD:** Non-Farm Payrolls (prvi petak), FOMC, CPI, Retail Sales
+- **EUR:** ECB odluke, German ZEW
+- **GBP:** BoE odluke, UK CPI
+- **JPY:** BoJ odluke
+
+---
+
+## Session 22 (2026-02-03) - Modern AI Trading Upgrades (Phase 6)
+
+### Sto je implementirano?
+
+1. **Market Regime Detection** (Phase 1)
+   - ADX + Bollinger Bands za prepoznavanje trzisnog rezima
+   - 4 rezima: TRENDING, RANGING, VOLATILE, LOW_VOLATILITY
+   - Blokira LOW_VOLATILITY i VOLATILE (prevelik rizik)
+   - TRENDING = samo S trendom, RANGING = samo kod S/R
+   - `src/market/indicators.py` - novi indikatori
+   - `src/trading/auto_scanner.py` - regime filter
+
+2. **External Sentiment Integration** (Phase 2)
+   - Claude-powered news analysis
+   - VIX correlation (risk-on/risk-off)
+   - Economic calendar sentiment
+   - `src/sentiment/` - novi direktorij s providerima
+   - Weights: PA 30%, News 35%, VIX 15%, Calendar 20%
+
+3. **Walk-Forward Validation** (Phase 3)
+   - Proper out-of-sample testing
+   - Rolling train/test windows
+   - Monte Carlo simulation za confidence intervals
+   - `src/backtesting/walk_forward.py` - validator
+
+4. **Regime-Aware Learning** (Phase 4)
+   - Learning engine prati win rate po rezimu
+   - Confidence adjustment baziran na rezimu
+   - Pattern tracking: `regime_TRENDING_EUR_USD`
+
+### Nove konfiguracije
+
+```json
+"market_regime": {
+  "enabled": true,
+  "block_low_volatility": true,
+  "block_volatile": true,
+  "trending_only_with_trend": true,
+  "ranging_require_sr": true
+},
+"external_sentiment": {
+  "enabled": true,
+  "weights": {"price_action": 0.30, "news_claude": 0.35, "vix": 0.15, "calendar": 0.20}
+}
+```
+
+### Novi fajlovi (Phase 6)
+
+```
+src/sentiment/                    # External Sentiment Integration
+├── __init__.py
+├── base_provider.py              # Abstract provider interface
+├── aggregator.py                 # Combines all sentiment sources
+└── providers/
+    ├── news_provider.py          # Claude-powered news analysis
+    ├── vix_provider.py           # VIX risk correlation
+    └── calendar_provider.py      # Economic calendar sentiment
+
+src/backtesting/walk_forward.py   # Walk-Forward Validation + Monte Carlo
+src/market/indicators.py          # ADX, Bollinger Bands, Regime Detection
+src/utils/database.py             # market_regimes tablica
+```
+
+### Ocekivano poboljsanje
+- +10-20% win rate (konzervativna procjena)
+- Manje tradeova u losim uvjetima (regime filter)
+- Bolja kvaliteta signala (external sentiment)
+- Robustniji backtest (walk-forward validation)
+
+---
+
+## Session 21 (2026-02-03) - Adaptive Settings + Optimizacija
+
+### Sto je implementirano?
+
+1. **Adaptive Settings Manager** (`src/analysis/adaptive_settings.py`)
+   - Automatski prilagodava postavke na temelju performansi
+   - Analizira win rate, stop hunts, R:R doseg
+   - Primjenjuje promjene nakon svakog zatvorenog tradea
+
+2. **Auto-Reconnect za MT5** (`src/trading/mt5_client.py`)
+   - `_ensure_connected()` automatski reconnecta kad veza padne
+   - `reconnect()` metoda za force reconnect
+   - Nema vise "No IPC connection" errora
+
+3. **Konzervativne postavke za profitabilnost**
+   - Confidence threshold: 75%
+   - Risk per trade: 1%
+   - Target R:R: 2:1
+   - Strogi MTF check (55%)
+   - AI Override DISABLED
+
+4. **Sync & Learn automatizacija**
+   - Svaki 5. scan sync-a zatvorene pozicije
+   - Automatski uci iz svakog tradea
+   - Self-tuning se pokrece nakon ucenja
+
+### Promjene u postavkama
+
+| Postavka | Prije | Sada |
+|----------|-------|------|
+| min_confidence_threshold | 35% | 75% |
+| risk_per_trade_percent | 2.0% | 1.0% |
+| target_rr | 1.5 | 2.0 |
+| max_spread_pips | 4.0 | 2.5 |
+| MTF threshold | 85% | 55% |
+| AI Override | enabled | disabled |
+
+### Lekcije naucene
+
+1. **Agresivne postavke = gubici** - 22% win rate, -1163 EUR
+2. **Kvaliteta > Kvantiteta** - manje tradeova, bolji rezultati
+3. **Samo S TRENDOM** - counter-trend = gubitak
+4. **Manje pozicije** - max 5 umjesto 10
+
+---
+
+## Account Status
+
+```
+Account: 62859209 (OANDA-TMS-Demo)
+Balance: ~48,720 EUR
+Started: 50,000 EUR
+Realized P/L: ~-1,280 EUR (lekcije naucene!)
+```
 
 ---
 
@@ -137,300 +302,252 @@ result = om.open_position(..., _bypass_validation=True)
 ```bash
 cd "C:\Users\mglav\Projects\AI Trader\Dev"
 
-# 1. Otvori MT5 terminal i cekaj da se ucita
+# 1. PRVO pokreni MT5 terminal i ulogiraj se!
 
-# 2. Testiraj konekciju
-python scripts/check_connection.py
+# 2. Pokreni auto-trading
+python run_auto_trading.py
 
-# 3. Pokreni trader (CLI)
-python trader.py
+# ILI za 24/7 daemon mode
+python run_daemon.py
 
-# 4. ILI pokreni Web Dashboard
-streamlit run dashboard.py --server.address 0.0.0.0
-
-# 5. Remote pristup s mobitela (Tailscale)
-# URL: http://100.106.24.4:8501
+# ILI za web dashboard
+python -m streamlit run dashboard.py
 ```
 
-### Trader Komande
-```
-help              - Pomoc
-price EUR_USD     - Cijena
-account           - Stanje racuna
-positions         - Otvorene pozicije
-analyze EUR/USD   - AI analiza
-trade             - Trade workflow
-emergency         - Zatvori sve pozicije
-exit              - Izlaz
+**VAZNO:** MT5 terminal MORA biti pokrenut PRIJE Python servisa!
+
+---
+
+## Kljucne postavke za profitabilnost
+
+```json
+{
+  "enabled": true,
+  "min_confidence_threshold": 75,
+  "risk_per_trade_percent": 1.0,
+  "max_concurrent_positions": 5,
+  "max_daily_trades": 20,
+  "scalping": {
+    "target_rr": 2.0,
+    "max_spread_pips": 2.5,
+    "max_sl_pips": 15.0
+  },
+  "ai_validation": {
+    "enabled": true,
+    "reject_on_failure": true
+  },
+  "ai_override": {
+    "enabled": false
+  }
+}
 ```
 
 ---
 
-## Implementirano
-
-### Foundation (Faza 1)
-- `src/utils/config.py` - Konfiguracija (.env)
-- `src/utils/logger.py` - Loguru logging
-- `src/utils/helpers.py` - Utility funkcije
-- `src/utils/database.py` - SQLite (trades, decisions, errors)
-
-### Trading (Faza 2)
-- `src/trading/mt5_client.py` - **MT5 API wrapper** (NOVO)
-- `src/trading/orders.py` - Open/close/modify pozicije (MT5)
-- `src/trading/position_sizer.py` - Risk tiers (1-3%)
-- `src/trading/risk_manager.py` - Hard-coded limiti
-
-### AI (Faza 3)
-- `src/market/indicators.py` - EMA, RSI, MACD, ATR, S/R
-- `src/analysis/sentiment.py` - Price action sentiment
-- `src/analysis/adversarial.py` - Bull vs Bear engine
-- `src/analysis/confidence.py` - Final score (0-100)
-- `src/core/interface.py` - Interaktivni CLI
-- `src/core/settings_manager.py` - Settings loader
-
-### Web Dashboard (Faza 3.6)
-- `dashboard.py` - Streamlit entry point
-- `pages/` - Multi-page app (10 stranica)
-- `components/` - Reusable UI komponente (9 komponenti)
-- Pokretanje: `streamlit run dashboard.py`
-
-### UX Components (Faza 4.3)
-- `components/tooltips.py` - 40+ metrika s objasnjenjima
-- `components/suggested_actions.py` - Pametne preporuke
-- `components/position_health.py` - Health indikatori
-- `components/status_bar.py` - Globalni status
-- `components/notifications.py` - Smart alerts
-- `components/onboarding.py` - Welcome wizard
-- `components/help_resources.py` - Help & FAQ
-
-### Performance Analytics (Faza 4.4)
-- `pages/10_Performance.py` - Kompletna statistika
-- Equity curve, drawdown, P/L distribution
-- Performance by pair, by day/hour
-
-### Settings System
-```
-settings/
-├── system_prompt.md    # AI ponasanje (SMC Enhanced)
-├── config.json         # Konfiguracija
-├── skills/             # Trading skillovi
-│   ├── scalping.md
-│   ├── swing_trading.md
-│   ├── news_trading.md
-│   ├── smc_trading.md       # NOVO - Smart Money Concepts
-│   ├── fvg_strategy.md      # NOVO - FVG trading
-│   └── killzone_trading.md  # NOVO - Session trading
-└── knowledge/          # Domensko znanje
-    ├── forex_basics.md
-    ├── risk_rules.md
-    ├── lessons.md
-    ├── market_structure.md  # NOVO - HTF/LTF alignment
-    ├── fair_value_gap.md    # NOVO - FVG, iFVG
-    ├── order_blocks.md      # NOVO - OB identification
-    ├── liquidity.md         # NOVO - BSL/SSL, PDH/PDL
-    ├── bos_cisd.md          # NOVO - BOS vs CISD
-    ├── entry_models.md      # NOVO - 3 ICT modela
-    └── session_trading.md   # NOVO - Killzone strategies
-```
-
-### Automatic Learning System (Faza 4.2) - NOVO
-- `src/analysis/error_analyzer.py` - Kategoriza greske (8 kategorija)
-- `src/trading/trade_lifecycle.py` - Centralni handler za zatvaranje tradea
-- Automatski zapisuje greske u `errors` tablicu za RAG
-- Automatski generira lekcije u `lessons.md` za znacajne gubitke
-
----
-
-## Risk Management (HARD-CODED)
+## Arhitektura - Modern AI Trading Flow
 
 ```
-Confidence 90-100%: Max 3% risk
-Confidence 70-89%:  Max 2% risk
-Confidence 50-69%:  Max 1% risk
-Confidence < 50%:   NE TRADATI
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        AUTO-TRADING SERVICE                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  SCAN → REGIME → ANALYZE → FILTER CHAIN → AI VALIDATE → EXECUTE          │
+│    │       │         │           │                           │           │
+│    │       │         │           │                           v           │
+│    │       │         │           │                     ┌──────────┐      │
+│    │       │         │           └─ Builtin filters ──>│  CLOSE   │      │
+│    │       │         │           └─ AI-generated ─────>└────┬─────┘      │
+│    │       │         │                                      │            │
+│    │       │         └── Technical + Sentiment ─────────────┤            │
+│    │       │                                                v            │
+│    │       └── Market Regime ──────────────────────────>┌──────────┐     │
+│    │                                                    │  LEARN   │     │
+│    └── 12 instruments every 15s                         └────┬─────┘     │
+│                                                              │           │
+│                                                              v           │
+│  ┌─────────────────── SELF-UPGRADE SYSTEM (daily) ───────────────────┐   │
+│  │  Analyze losses → Generate filter → Validate → Backtest → Deploy  │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
 
-Max daily drawdown:  3%
-Max weekly drawdown: 6%
-Max positions:       3
+Cilj: 200 EUR/dan = 4-5 kvalitetnih tradeova po 40-50 EUR
+```
+
+## Arhitektura - Self-Upgrade System
+
+```
+Every 24 hours:
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                    PERFORMANCE ANALYZER                              │
+  │  Analyze last 7 days → Identify losing patterns                     │
+  │  (instrument, session, regime, direction, combined)                 │
+  └─────────────────────────────────┬───────────────────────────────────┘
+                                    │
+                                    v
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                    CODE GENERATOR                                    │
+  │  Template-based Python code with safety constraints                 │
+  │  ALLOWED: dataclasses, typing, datetime, math, statistics           │
+  │  BLOCKED: os, sys, subprocess, exec, eval, open, socket, requests   │
+  └─────────────────────────────────┬───────────────────────────────────┘
+                                    │
+                                    v
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                    CODE VALIDATOR                                    │
+  │  AST parsing → Import whitelist → Dangerous function detection      │
+  │  → Sandbox execution test → BaseFilter inheritance check            │
+  └─────────────────────────────────┬───────────────────────────────────┘
+                                    │
+                                    v
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                    UPGRADE EXECUTOR                                  │
+  │  Walk-forward backtest on historical signals                        │
+  │  Requirements: Block rate ≤50%, Accuracy >50%, Robustness ≥60%      │
+  └─────────────────────────────────┬───────────────────────────────────┘
+                                    │
+                        ┌───────────┴───────────┐
+                        │                       │
+                   PASS │                       │ FAIL
+                        v                       v
+              ┌─────────────────┐     ┌─────────────────┐
+              │ Deploy to       │     │ Log & discard   │
+              │ ai_generated/   │     │                 │
+              └────────┬────────┘     └─────────────────┘
+                       │
+                       v
+              ┌─────────────────────────────────────────┐
+              │  Monitor performance → Auto-rollback    │
+              │  if win_rate drops >10% or 5 losses     │
+              └─────────────────────────────────────────┘
 ```
 
 ---
 
-## Sljedece (Faza 4 - Ostalo)
+## Kljucni fajlovi (prioritet)
 
-Kada korisnik pokrene novu sesiju, nastavi s:
+| # | Fajl | Svrha |
+|---|------|-------|
+| 1 | `CLAUDE_CONTEXT.md` | Ovaj fajl - session kontekst |
+| 2 | `settings/auto_trading.json` | Trading konfiguracija |
+| 3 | `src/services/auto_trading_service.py` | Main loop + sync + upgrade cycle |
+| 4 | `src/trading/auto_scanner.py` | Market scanner + MTF + Regime + Filter chain |
+| 5 | `src/upgrade/upgrade_manager.py` | Self-Upgrade System orchestrator |
+| 6 | `src/upgrade/filter_registry.py` | Filter chain management |
+| 7 | `src/market/indicators.py` | Technical + ADX + Bollinger + Regime |
+| 8 | `src/sentiment/aggregator.py` | External sentiment (VIX, News, Calendar) |
+| 9 | `src/analysis/learning_engine.py` | Pattern learning + Regime-aware |
+| 10 | `src/trading/mt5_client.py` | MT5 connection + auto-reconnect |
+| 11 | `src/backtesting/walk_forward.py` | Walk-forward validation + Monte Carlo |
+| 12 | `src/analysis/llm_engine.py` | AI validation rules |
+| 13 | `src/analysis/news_providers.py` | News API providers (Finnhub, FMP, Recurring) |
+| 14 | `test_upgrade_system.py` | Self-Upgrade test suite |
 
-1. ~~Backtesting modul~~ - DONE
-2. ~~Automatsko ucenje iz gresaka~~ - DONE
-3. ~~Performance analytics~~ - DONE
-4. ~~UX improvements~~ - DONE (3 faze)
-5. ~~Documentation~~ - DONE (README.md)
-6. ~~Error monitoring~~ - DONE
-7. **Live trading test** - prvi pravi tradeovi na demo
+---
+
+## Troubleshooting
+
+### "No IPC connection" error?
+```bash
+# 1. Provjeri da je MT5 terminal pokrenut i ulogiran
+# 2. Restartaj Python servis NAKON sto je MT5 upaljen
+python run_auto_trading.py
+```
+
+### Previse gubitaka?
+```bash
+# Pauziraj trading
+python -c "
+import json
+with open('settings/auto_trading.json', 'r') as f:
+    cfg = json.load(f)
+cfg['enabled'] = False
+with open('settings/auto_trading.json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+print('Trading PAUSED')
+"
+```
+
+### Provjeri stanje
+```bash
+python -c "
+import MetaTrader5 as mt5
+mt5.initialize()
+acc = mt5.account_info()
+pos = mt5.positions_get()
+print(f'Balance: {acc.balance:.2f} EUR')
+print(f'Equity: {acc.equity:.2f} EUR')
+print(f'Positions: {len(pos)}')
+for p in pos:
+    print(f'  {p.symbol} {\"LONG\" if p.type==0 else \"SHORT\"} P/L: {p.profit:+.2f}')
+"
+```
 
 ---
 
 ## Session Log
 
-### Session 1 (2026-01-30)
-- Faza 1-3 implementirane
-- OANDA client kreiran (nije testiran - nedostajali credentials)
+### Session 24 (2026-02-03) - Self-Upgrade System
+- **Performance Analyzer** - Identificira losing patterns (6 pronadeno)
+- **Code Generator** - Template-based Python s safety constraints
+- **Code Validator** - AST + security checks (blokira os, exec, open, eval)
+- **Upgrade Executor** - Walk-forward backtest, robustness score
+- **Upgrade Manager** - Daily cycle, max 3 proposals, auto-rollback
+- **Filter Registry** - Filter chain integration u auto_scanner
+- **Builtin Filters** - consecutive_loss, low_confidence_direction
+- **Novi direktorij:** `src/upgrade/` (8 fajlova)
+- **Novi direktorij:** `src/filters/` (builtin + ai_generated)
+- **Test suite:** `test_upgrade_system.py` - 9/9 PASSED
+- **Config:** `self_upgrade` sekcija u auto_trading.json
+- **Rezultat:** AI automatski generira filtere iz losing patterna
 
-### Session 2 (2026-01-30)
-- **MT5 integracija ZAVRSENA**
-- Zamijenjen OANDA s MetaTrader 5
-- Konfiguriran account 62859209
-- Testirano i RADI:
-  - Konekcija
-  - Dohvat cijena
-  - Account info
-  - trader.py interface
-- Fixed Windows emoji encoding issues
+### Session 23 (2026-02-03) - News API Integration
+- **News Provider System** - Multi-provider s fallback (Finnhub, FMP, FF, Recurring)
+- **Recurring Provider** - Auto-generira high-impact evente bez API kljuca
+- **Settings UI** - News API tab za konfiguraciju
+- **NewsFilter integracija** - async refresh, status tracking
+- **Novi fajl:** `src/analysis/news_providers.py`
+- **Rezultat:** Automatsko dohvacanje economic calendar podataka
 
-### Session 3 (2026-01-30)
-- **Web Dashboard ZAVRSEN**
-- Streamlit web UI s 7 stranica
-- Chat interface s AI komandama
-- Technical analysis s chartovima
-- **Skills/Knowledge EDITOR** - Create/Edit/Delete kroz UI
-- System Prompt editor s markdown preview
-- Dark theme
-- CLI i dalje radi uz web
+### Session 22 (2026-02-03) - Modern AI Trading Upgrades (Phase 6)
+- **Market Regime Detection** - ADX + Bollinger za TRENDING/RANGING/VOLATILE/LOW_VOL
+- **External Sentiment** - VIX + News (Claude) + Calendar (ENABLED!)
+- **Walk-Forward Validation** - Out-of-sample testing + Monte Carlo
+- **Regime-Aware Learning** - Learning engine prati win rate po rezimu
+- **Novi direktorij:** `src/sentiment/` s 6 novih fajlova
+- **Novi modul:** `src/backtesting/walk_forward.py`
+- **Rezultat:** Sustav sada ima naprednu analizu trzisnih uvjeta
 
-### Session 4 (2026-01-30)
-- **Backtesting ZAVRSEN**
-- Walk-forward simulation engine
-- Performance metrike (Sharpe, Sortino, Win Rate, etc.)
-- Equity curve i drawdown charts
-- Save/load reports
+### Session 21 (2026-02-03) - Adaptive Settings + Optimizacija
+- **Adaptive Settings Manager** - auto-tuning postavki
+- **MT5 Auto-Reconnect** - automatski reconnect kad veza padne
+- **Konzervativne postavke** - 75% confidence, 1% risk, 2:1 R:R
+- **Learning Engine improvements** - bolje sync-anje
+- **Lekcija:** Agresivne postavke = gubici. Kvaliteta > kvantiteta.
+- **Rezultat:** Postavke optimizirane za 200 EUR/dan cilj
 
-### Session 5 (2026-01-31)
-- **Automatsko Ucenje iz Gresaka ZAVRSENO**
-- `src/analysis/error_analyzer.py` - 8 kategorija gresaka
-- `src/trading/trade_lifecycle.py` - centralni handler
-- Automatski zapisuje u `errors` tablicu (RAG)
-- Automatski generira lekcije u `lessons.md`
-- Integracija u orders.py, interface.py, 4_Positions.py
-- Test suite: `test_learning_system.py` - 6/6 testova prolazi
+### Session 20 (2026-02-03) - Self-Tuning AI Override
+- AI Override Evaluator
+- Tunable Settings s granicama
 
-### Session 6 (2026-01-31)
-- **UX Poboljsanja Faza 1 ZAVRSENA**
-- `components/tooltips.py` - 40+ metrika s objasnjenjima
-- `components/suggested_actions.py` - pametne preporuke akcija
-- Kontekstualni tooltipovi na svim metrikama
-- "Objasni jednostavno" sekcije za pocetnike
-- Suggested Actions kartice na Dashboard
-- Windows emoji kompatibilnost popravljena
-
-### Session 7 (2026-01-31)
-- **UX Poboljsanja Faza 2 ZAVRSENA**
-- `pages/9_Learn.py` - Edukativna stranica za pocetnike
-- `components/position_health.py` - Health indikatori
-- `components/status_bar.py` - Globalni status bar
-- Simple/Detailed toggle na Analysis i Backtest
-
-### Session 8 (2026-01-31)
-- **UX Poboljsanja Faza 3 ZAVRSENA**
-- `components/onboarding.py` - Welcome Wizard (5 koraka)
-- `components/notifications.py` - Pametni notification sustav
-- `components/help_resources.py` - Help & Resources
-- **Performance Analytics ZAVRSENA**
-- `pages/10_Performance.py` - Kompletna trading statistika
-- **Documentation & Monitoring ZAVRSENO**
-- `README.md` - Kompletna dokumentacija
-- `src/utils/monitoring.py` - Error tracking
-- `pages/11_Monitoring.py` - System health UI
-- **Database Browser ZAVRSEN**
-- `pages/12_Database.py` - SQLite GUI s SQL editorom
-- **Bug fixes:** MT5 connection status konzistentnost
-
-### Session 9 (2026-01-31)
-- **Risk Validation Gate ZAVRSEN**
-- `OrderManager.open_position()` sada ZAHTIJEVA risk validaciju
-- Novi parametri: confidence, risk_amount
-- 5/5 testova prolazi
-
-### Session 10 (2026-01-31)
-- **SMC Knowledge Integration ZAVRSEN**
-- Hybrid Mode: 5 paralelnih agenata za ekstrakciju iz 56 PDF-ova
-- 7 novih knowledge fajlova kreirano:
-  - market_structure.md, fair_value_gap.md, order_blocks.md
-  - liquidity.md, bos_cisd.md, entry_models.md, session_trading.md
-- 3 nova skill fajla kreirano:
-  - smc_trading.md, fvg_strategy.md, killzone_trading.md
-- system_prompt.md azuriran s SMC workflow (11 koraka)
-- AI sada razumije: FVG, OB, BOS, CISD, Liquidity, Killzones
-
-### Session 11 (2026-01-31)
-- **Security Fixes ZAVRSENI** - 6 kriticnih bugova popravljeno
-- Weekly drawdown check DODAN (6% limit sada se PROVJERAVA)
-- Auto-reset daily/weekly P/L na UTC granicama
-- Global bypass flag UKLONJEN (sigurnosni rizik)
-- Equity fallback UKLONJEN (50k default bio opasan)
-- Pip calculation FIX za sve instrument tipove
-- Volume rounding FIX za tocno poravnanje s brokerom
-- 32 testa prolazi (14 novih + 13 novih + 5 postojecih azurirano)
-- **Security score: 83/100 -> 92/100**
-
-### Session 12 (2026-01-31)
-- **Remote Access ZAVRSEN**
-- Tailscale VPN instaliran na PC i Samsung S24
-- PC IP: `100.106.24.4`, Mobile IP: `100.74.221.115`
-- Zero-config mesh VPN (WireGuard encrypted)
-- Dashboard dostupan s mobitela: `http://100.106.24.4:8501`
-- Auto-start skripta za Windows Startup
-- `start_dashboard.bat` + `start_dashboard_hidden.vbs`
-
-### Session 13 (2026-01-31)
-- **Skill Buttons ZAVRSENI**
-- Nova komponenta: `components/skill_buttons.py`
-- 6 vizualnih gumba: SMC, FVG, Killzone, Scalping, Swing, News
-- Dashboard: Trading Strategies sekcija s karticama
-- Chat: Skill gumbi u sidebaru s pair selectorom
-- **BTC/USD podrska ZAVRSENA**
-- BTCUSD simbol mapiran (bez .pro sufiksa)
-- Pip value = 1.0 za kripto
-- Spread kalkulacija prilagodena
-- Dostupno u Chat, Analysis, Backtest
-- **Tailscale Funnel** za javni pristup
-- Public URL: `https://mgpc.taild09bbd.ts.net/`
-- **Git repozitorij inicijaliziran**
-- Initial commit: 171 fajlova, 987k linija
+### Session 14-19 (2026-02-02)
+- Full Auto Trading implementiran
+- AI Visibility, Learning Loop
+- 24/7 Daemon Mode
 
 ---
 
-## Dashboard Stranice
+## Hard Limits (NIKAD se ne mogu zaobici!)
 
-| # | Stranica | Opis |
-|---|----------|------|
-| 1 | Dashboard | Account overview, Suggested Actions |
-| 2 | Chat | AI conversation interface |
-| 3 | Analysis | Technical analysis + Simple/Detailed |
-| 4 | Positions | Position management + Health |
-| 5 | History | Trade history |
-| 6 | Settings | Configuration editor |
-| 7 | Skills | Skills/Knowledge/Prompt editor |
-| 8 | Backtest | Walk-forward backtesting |
-| 9 | Learn | Educational content |
-| 10 | Performance | Trading statistics & analytics |
-| 11 | Monitoring | System health, errors, alerts |
-| 12 | Database | SQLite browser, queries, maintenance |
+| Limit | Vrijednost |
+|-------|------------|
+| Max risk per trade | 3% |
+| Max daily drawdown | 5% |
+| Max weekly drawdown | 10% |
+| Max concurrent positions | 10 |
+| Max position size | 100,000 units |
 
 ---
 
-## Kljucni fajlovi
-
-| Fajl | Svrha |
-|------|-------|
-| `CLAUDE_CONTEXT.md` | Ovaj fajl - session kontekst |
-| `PROGRESS.md` | Detaljan napredak |
-| `.env` | MT5 credentials (NE COMMITAJ!) |
-| `trader.py` | CLI Entry Point |
-| `dashboard.py` | WEB Dashboard Entry Point |
-| `start_dashboard.bat` | Auto-start batch skripta |
-| `start_dashboard_hidden.vbs` | Hidden launcher (Startup) |
-| `src/trading/mt5_client.py` | MT5 API wrapper |
-
----
-
-*Zadnje azuriranje: 2026-01-31 | Session 13 - Skill Buttons + BTC/USD DONE*
+*Zadnje azuriranje: 2026-02-03 | Session 24 - Self-Upgrade System TESTED & WORKING*

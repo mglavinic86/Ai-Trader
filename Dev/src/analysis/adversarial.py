@@ -257,7 +257,15 @@ class AdversarialEngine:
         )
 
     def _calculate_case_score(self, points: list[CasePoint]) -> float:
-        """Calculate overall score for a case (0-100)."""
+        """
+        Calculate overall score for a case (0-100).
+
+        Uses weighted sum with diminishing returns instead of simple average.
+        This rewards having multiple strong arguments without over-inflating
+        scores when many weak arguments are present.
+        """
+        import math
+
         if not points:
             return 0.0
 
@@ -265,9 +273,14 @@ class AdversarialEngine:
         if total_weight == 0:
             return 0.0
 
-        # Weighted average, scaled to 0-100
-        weighted_sum = sum(p.weight * 50 for p in points)  # Each point contributes up to 50
-        score = weighted_sum / len(points)
+        # Weighted sum with diminishing returns
+        # Score approaches 100 asymptotically as weight accumulates
+        # Formula: 100 * (1 - e^(-total_weight / 3.0))
+        # - At weight=1: ~28 points
+        # - At weight=2: ~49 points
+        # - At weight=3: ~63 points
+        # - At weight=5: ~81 points
+        score = 100 * (1 - math.exp(-total_weight / 3.0))
 
         return min(100, score)
 

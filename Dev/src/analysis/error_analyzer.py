@@ -347,7 +347,7 @@ class ErrorAnalyzer:
         if sentiment_score != 0:
             sentiment_direction = "bullish" if sentiment_score > 0 else "bearish"
             trade_direction = "bullish" if direction == "LONG" else "bearish"
-            if sentiment_direction == trade_direction:
+            if sentiment_direction != trade_direction:
                 return ErrorCategory.SENTIMENT_MISMATCH
 
         # Check for timing issue
@@ -576,6 +576,21 @@ class ErrorAnalyzer:
         except KeyError as e:
             logger.warning(f"Missing template key: {e}")
             return template
+
+
+def build_lesson_prompt(trade_data: dict, market_context: dict, analysis: ErrorAnalysis) -> str:
+    """Build a prompt for LLM to generate an improved lesson."""
+    payload = {
+        "trade_data": trade_data,
+        "market_context": market_context,
+        "analysis": analysis.to_dict()
+    }
+    return (
+        "Generate a concise trading lesson in Croatian.\n"
+        "Format as markdown with title, what happened, lesson, and rule.\n"
+        "Keep it short and actionable.\n"
+        f"Context JSON:\n{payload}"
+    )
 
 
 # Convenience function
