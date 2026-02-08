@@ -14,8 +14,10 @@ Usage:
 """
 
 import asyncio
+import json
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, List, Callable, Dict, Any
 from dataclasses import dataclass, field
 
@@ -96,7 +98,7 @@ class AutoTradingService:
 
         # Self-Upgrade System
         self.upgrade_manager: Optional[UpgradeManager] = None
-        self._last_upgrade_check: Optional[datetime] = None
+        self._last_upgrade_check: Optional[datetime] = self._load_last_upgrade_check()
 
         logger.info("AutoTradingService initialized")
 
@@ -269,6 +271,17 @@ class AutoTradingService:
         scan_start = datetime.now(timezone.utc)
 
         try:
+            # Check pending limit order status before scanning
+            if self.executor._pending_orders:
+                pending_events = self.executor.check_pending_orders()
+                for event in pending_events:
+                    if event["type"] == "FILLED":
+                        self._status.trades_executed_today += 1
+                        heartbeat_manager.increment_trades()
+                        logger.info(f"Pending order filled: {event['instrument']} {event['direction']}")
+                    elif event["type"] == "EXPIRED":
+                        logger.info(f"Pending order expired: {event['instrument']} {event['direction']}")
+
             # Scan all instruments
             signals = self.scanner.scan_all_instruments()
 
@@ -473,6 +486,28 @@ class AutoTradingService:
         except Exception as e:
             logger.warning(f"Sync and learn error: {e}")
 
+    _UPGRADE_CHECK_FILE = Path("data/.last_upgrade_check")
+
+    def _load_last_upgrade_check(self) -> Optional[datetime]:
+        """Load last upgrade check time from disk (survives restarts)."""
+        try:
+            if self._UPGRADE_CHECK_FILE.exists():
+                data = json.loads(self._UPGRADE_CHECK_FILE.read_text())
+                return datetime.fromisoformat(data["last_check"])
+        except Exception:
+            pass
+        return None
+
+    def _save_last_upgrade_check(self, dt: datetime) -> None:
+        """Save last upgrade check time to disk."""
+        try:
+            self._UPGRADE_CHECK_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._UPGRADE_CHECK_FILE.write_text(json.dumps({
+                "last_check": dt.isoformat()
+            }))
+        except Exception as e:
+            logger.warning(f"Failed to save upgrade check time: {e}")
+
     def _should_run_upgrade_cycle(self) -> bool:
         """Check if it's time to run the Self-Upgrade cycle."""
         if not self.upgrade_manager or not self.config.self_upgrade.enabled:
@@ -492,6 +527,7 @@ class AutoTradingService:
         try:
             logger.info("Starting Self-Upgrade cycle...")
             self._last_upgrade_check = datetime.now(timezone.utc)
+            self._save_last_upgrade_check(self._last_upgrade_check)
 
             result = await self.upgrade_manager.run_daily_upgrade_cycle()
 

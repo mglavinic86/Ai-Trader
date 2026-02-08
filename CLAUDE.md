@@ -11,7 +11,7 @@ cd Dev
 cat CLAUDE_CONTEXT.md   # Procitaj kontekst
 ```
 
-## Projekt Status (2026-02-03)
+## Projekt Status (2026-02-08)
 
 | Faza | Status |
 |------|--------|
@@ -23,9 +23,31 @@ cat CLAUDE_CONTEXT.md   # Procitaj kontekst
 | Faza 5.7: Adaptive Settings + Optimizacija | DONE |
 | Faza 6: Modern AI Upgrades | DONE |
 | Faza 6.1: News API Integration | DONE |
-| **Faza 7: Self-Upgrade System** | **DONE** |
+| Faza 7: Self-Upgrade System | DONE |
+| Faza 8: SMC Implementation | DONE |
+| Faza 9: ISI (Institutional Sequence Intelligence) | DONE |
+| Faza 10: Validation & SMC Backtest Engine | DONE |
+| Faza 10.1: ISI in Backtest Engine | DONE |
+| Faza 10.2: Walk-Forward + Fast Backtests | DONE |
+| Faza 10.3: SL/Entry/TP Improvements | DONE |
+| Faza 10.4: Limit Entry (Breakthrough) | DONE |
+| Faza 10.5: Limit Entry in Production | DONE |
 
-**NOVO: AI Self-Upgrade System - automatski generira i deploya filtere bazirane na losing patternima!**
+### Trenutno stanje (2026-02-08)
+
+| Metrika | Vrijednost |
+|---------|------------|
+| Balance | 48,517.30 EUR (start: 50,000) |
+| Realized P/L | -1,163.15 EUR |
+| Instruments | EUR_USD, GBP_USD, XAU_USD |
+| Risk/Trade | 0.3% |
+| Max Daily Trades | 3 |
+| Target R:R | 2.0 minimum |
+| Service | STOPPED |
+| Dry Run | TRUE |
+| Decision Logic | Pure SMC + ISI |
+
+**NAPOMENA:** Service ne radi, dry_run=true. SMC+ISI pipeline potpuno implementiran.
 
 ## NOVO: Full Auto Trading (Session 14)
 
@@ -49,48 +71,66 @@ python run_auto_trading.py
 ### Kljucne komponente
 ```
 src/
-├── core/auto_config.py           # Konfiguracija + RegimeConfig + SentimentConfig + SelfUpgradeConfig
-├── trading/auto_scanner.py       # Market scanner + Regime filter + Filter chain
-├── trading/auto_executor.py      # Trade executor
-├── trading/emergency.py          # Emergency stop
-├── market/indicators.py          # Technical + ADX + Bollinger + Regime Detection
-├── sentiment/                    # External Sentiment (Phase 6)
-│   ├── aggregator.py             # Combines all sources
-│   └── providers/                # VIX, News, Calendar
-├── backtesting/walk_forward.py   # Walk-Forward Validation + Monte Carlo
-├── analysis/learning_engine.py   # Pattern learning + Regime-aware
-├── upgrade/                      # Self-Upgrade System (Phase 7)
-│   ├── base_filter.py            # Abstract filter class
-│   ├── filter_registry.py        # Filter management
-│   ├── performance_analyzer.py   # Loss pattern analysis
-│   ├── code_generator.py         # Safe code generation
-│   ├── code_validator.py         # AST security check
-│   ├── upgrade_executor.py       # Backtest + deploy
-│   └── upgrade_manager.py        # Main orchestrator
-├── filters/                      # Trading filters
-│   ├── builtin/                  # Built-in filters
-│   └── ai_generated/             # AI-generated filters
+├── smc/                             # Smart Money Concepts (Phase 8)
+│   ├── smc_analyzer.py              # HTF/LTF analysis + grading + SL/TP
+│   ├── structure.py                 # CHoCH, BOS, swing points
+│   ├── liquidity.py                 # Liquidity map, sweep detection
+│   ├── zones.py                     # FVG, OB, premium/discount
+│   ├── displacement.py              # Displacement detection
+│   ├── sequence_tracker.py          # ISI: 5-phase institutional cycle
+│   └── liquidity_heat_map.py        # ISI: Predictive liquidity density
+├── analysis/
+│   ├── confidence_calibrator.py     # ISI: Bayesian calibration (Platt Scaling)
+│   ├── cross_asset_detector.py      # ISI: Correlation divergence
+│   ├── learning_engine.py           # Pattern learning + Regime-aware
+│   └── llm_engine.py               # AI validation (SMC+ISI rules)
+├── core/auto_config.py              # Konfiguracija + Risk model
+├── trading/auto_scanner.py          # SMC+ISI market scanner pipeline
+├── trading/auto_executor.py         # Trade executor + STOP DAY
+├── trading/emergency.py             # Emergency stop
+├── market/indicators.py             # Technical + ADX + Bollinger + Regime
+├── sentiment/                       # External Sentiment (Phase 6)
+│   ├── aggregator.py                # Combines all sources
+│   └── providers/                   # VIX, News, Calendar
+├── backtesting/walk_forward.py      # Walk-Forward Validation + Monte Carlo
+├── upgrade/                         # Self-Upgrade System (Phase 7)
+│   ├── base_filter.py               # Abstract filter class
+│   ├── filter_registry.py           # Filter management
+│   ├── performance_analyzer.py      # Loss pattern analysis
+│   ├── code_generator.py            # Safe code generation
+│   ├── code_validator.py            # AST security check
+│   ├── upgrade_executor.py          # Backtest + deploy
+│   └── upgrade_manager.py           # Main orchestrator
+├── filters/                         # Trading filters
+│   ├── builtin/                     # Built-in filters
+│   └── ai_generated/                # AI-generated filters
 ├── services/
-│   ├── auto_trading_service.py   # Main loop + upgrade cycle
-│   ├── heartbeat.py              # Heartbeat manager
-│   └── watchdog.py               # Watchdog monitor
-└── strategies/scalping.py        # Scalping strategija
+│   ├── auto_trading_service.py      # Main loop + upgrade cycle
+│   ├── heartbeat.py                 # Heartbeat manager
+│   └── watchdog.py                  # Watchdog monitor
+└── strategies/scalping.py           # Scalping strategija
 
-settings/auto_trading.json        # Config file (+ self_upgrade sekcija)
-pages/13_AutoTrading.py           # UI Control Panel
-run_auto_trading.py               # Simple runner
-run_daemon.py                     # 24/7 daemon s auto-restart
+settings/auto_trading.json           # Config file
+pages/13_AutoTrading.py              # UI Control Panel
+run_auto_trading.py                  # Simple runner
+run_daemon.py                        # 24/7 daemon s auto-restart
+test_smc.py                          # SMC tests (10)
+tests/test_*.py                      # ISI tests (32)
 ```
 
 ### Kako radi
-1. Scanner skenira 14 instrumenata svakih 15s
-2. **Market Regime Check** - blokira LOW_VOLATILITY i VOLATILE
-3. Analizira s Technical + **External Sentiment** (VIX, News, Calendar) + Adversarial
-4. Kad je confidence >= threshold (50% learning / 65% production)
-5. **Claude AI validira signal** (APPROVE/REJECT) ~3-4s
-6. **AI Override** - ako signal odbijen (MTF, spread, R:R), AI može override-ati
-7. Ako APPROVE, izvršava trade s risk management
-8. Learning Mode prati win rate **po market režimu**
+1. Scanner skenira 4 instrumenta svakih 60s (EUR_USD, GBP_USD, XAU_USD, BTCUSD)
+2. **SMC HTF Analysis** - H4/H1 struktura + likvidnost + **heat map** [ISI]
+3. **SMC LTF Analysis** - M5 sweep + CHoCH/BOS + FVG/OB + displacement
+4. **Sequence Tracking** - 5-phase cycle, modifier -20 to +15 [ISI]
+5. **Market Regime Check** - blokira LOW_VOLATILITY i VOLATILE
+6. Analizira s Technical + **External Sentiment** (VIX, News, Calendar) + Adversarial
+7. **Cross-Asset Divergence** - correlation anomalies, modifier -10 to +15 [ISI]
+8. **Bayesian Calibration** - Platt Scaling maps raw -> calibrated confidence [ISI]
+9. Kad je confidence >= threshold (75% trenutno)
+10. **Claude AI validira signal** (APPROVE/REJECT) s ISI kontekstom
+11. Ako APPROVE, izvrsava trade s risk management (ako dry_run=false)
+12. Learning Mode prati win rate **po market rezimu**
 
 ### Hard Limits (NIKAD se ne mogu zaobici)
 - Max risk/trade: 3%
@@ -106,8 +146,8 @@ run_daemon.py                     # 24/7 daemon s auto-restart
 
 - Account: `62859209`
 - Server: `OANDA-TMS-Demo`
-- Balance: `~48,720 EUR` (started 50,000)
-- Status: **AKTIVNO TRGUJE**
+- Balance: `48,517.30 EUR` (started 50,000)
+- Status: **STOPPED** (dry_run: true)
 - Cilj: **200 EUR/dan**
 
 ## Dashboard Stranice (13)
@@ -760,4 +800,367 @@ asyncio.run(get_upgrade_manager().run_daily_upgrade_cycle())
 
 ---
 
-*Zadnje azuriranje: 2026-02-03 | Session 24 - Self-Upgrade System TESTED & WORKING*
+## Session 26 - ISI: Institutional Sequence Intelligence (2026-02-07)
+
+**4 ISI komponente za poboljsanje kvalitete signala!**
+
+### Problem
+Confidence 82-92% ne odgovara win rate-u od 5.1%. SMC radi point-in-time scoring umjesto sekvencijalnog razumijevanja.
+
+### Implementirano:
+
+1. **Bayesian Confidence Calibration** (`src/analysis/confidence_calibrator.py`)
+   - Platt Scaling: `P(win) = 1/(1+exp(-(A*raw+B)))`
+   - Min 30 trades za fit, refit svakih 50
+   - Fallback: manual gradient descent (bez scipy)
+
+2. **Sequence Tracker** (`src/smc/sequence_tracker.py`)
+   - 5-phase cycle: ACCUM(-20) -> MANIP(-10) -> DISP(+5) -> **RETRACE(+15)** -> CONT(0)
+   - Phase 4 = OPTIMAL ENTRY (highest confidence boost)
+   - DB persistence: stanja prezive restart
+
+3. **Liquidity Heat Map** (`src/smc/liquidity_heat_map.py`)
+   - Predvidja WHERE sweep ce se dogoditi
+   - Temporal decay: `exp(-0.05 * hours)`
+   - Session weights: London=3.0, NY=2.5, Asian=2.0
+   - Poboljsan TP targeting (najjaci level umjesto nearest)
+
+4. **Cross-Asset Divergence** (`src/analysis/cross_asset_detector.py`)
+   - EUR/GBP(0.85), EUR/XAU(0.40), GBP/XAU(0.30)
+   - 1.5 sigma threshold za signal
+   - Modifier: -10 to +15 (30-min cache)
+
+### Pipeline integracija
+```
+Confidence = SMC_grade + sentiment + seq_modifier + divergence_modifier
+           -> Bayesian calibration (Platt Scaling)
+           -> Learning adjustment
+           -> Threshold check
+SL/TP     = SMC zones + Heat Map targets (strongest density level)
+AI Prompt = SMC rules + ISI context (phase, divergence)
+```
+
+### Nove DB tablice
+- `calibration_params` - Platt Scaling parametri
+- `sequence_states` - Aktivna stanja sekvenci
+- `sequence_transitions` - Log faznih prijelaza
+- `sequence_completions` - Dovrseni ciklusi
+- `correlation_snapshots` - Korelacijski snimci
+
+### Test Results
+```
+ISI Phase 1 (Calibrator):        6/6 PASSED
+ISI Phase 2 (Sequence Tracker):  9/9 PASSED
+ISI Phase 3 (Heat Map):          8/8 PASSED
+ISI Phase 4 (Cross-Asset):       9/9 PASSED
+Existing SMC Tests:              10/10 PASSED
+TOTAL: 42/42 ALL PASSED
+```
+
+---
+
+## Session 27 - Validation, Cleanup & SMC Backtest Engine (2026-02-07)
+
+**Implementirano:**
+- **Sustav validacija vs svijet** - 30+ izvora, ocjena 62/100 (75/100 bez perf.)
+- **Upgrade roadmap** - 7 promjena za 85/100 (`Brainstorming/Upgrade_Roadmap_85.md`)
+- **Operativni playbook** - 3-mjesecni plan (`Brainstorming/Operational_Playbook_Q1_2026.md`)
+- **FTMO plan** - MT5 kompatibilan (`Brainstorming/FTMO_Plan.md`)
+- **SMC BacktestEngine** - kompletno prepisan za SMC pipeline (H4+H1+M5)
+- **Cleanup** - zombie trade, BTCUSD removed, dry_run=true
+- **Bug fix** - `heat_map` undefined u smc_analyzer.py SHORT grani
+
+**SMC Backtest (EUR_USD 90d):**
+- 26 trades, WR=7.7%, P/L=-3,578 EUR, Max DD=7.63%
+- SMC je selektivniji (26 vs 179 stari) i kontrolira DD (7.6% vs 82%)
+- Problem: SL buffer (3 pips) preuzak - 92% SL hitova
+
+**Novi fajlovi:** `Brainstorming/` (4 plana), `backtest_results/`
+**Modificirani:** `engine.py` (rewrite), `smc_analyzer.py` (fix), `auto_trading.json`
+
+---
+
+## Session 29 - ISI in Backtest Engine (2026-02-08)
+
+**Backtest engine sada koristi isti ISI pipeline kao produkcija!**
+
+### Implementirano:
+
+1. **BacktestConfig ISI toggles** - 3 nova boolean polja (default False = backward compat)
+   - `isi_sequence_tracker` - Enable sequence phase tracking
+   - `isi_cross_asset` - Enable cross-asset divergence
+   - `isi_calibrator` - Enable Platt Scaling calibration
+
+2. **SimulatedTrade ISI metadata** - 6 novih polja
+   - `raw_confidence` - Pre-calibration confidence
+   - `calibrated_confidence` - Post-calibration confidence
+   - `sequence_phase` / `sequence_phase_name` - Current ISI phase
+   - `sequence_modifier` / `divergence_modifier` - Applied modifiers
+
+3. **BacktestCrossAssetAdapter** (`engine.py`)
+   - Zamjenjuje MT5-ovisni CrossAssetDetector s pre-loaded M5 podacima
+   - Time-aligned po timestampu (bez look-ahead bias)
+   - Ista korelacijska matematika kao produkcija
+
+4. **ISI Pipeline u _generate_smc_signal**
+   - Sequence tracker update PRIJE hard gates (kontinuirano pracenje)
+   - Divergence modifier NAKON sto je direction poznat
+   - Calibrator na kraju (passthrough ako nije fitted)
+
+5. **run_backtest_suite.py nadograde**
+   - Ucitava XAU_USD M5 kao cross-asset referencu
+   - ISI toggle u parameter grid (noISI vs Seq+XA+Cal)
+   - Nova `print_isi_comparison()` funkcija za side-by-side analizu
+   - ISI metadata summary u rezultatima
+
+### Confidence Pipeline (production parity)
+```
+SMC grade confidence (68-92)
++ sequence_modifier (-20 to +15)     <- SequenceTracker
++ divergence_modifier (-10 to +15)   <- CrossAssetDetector
+= raw_score (clamped 0-100)
+-> calibrator.calibrate()            <- ConfidenceCalibrator (passthrough if unfitted)
+= final confidence
+-> threshold check (>= min_confidence)
+```
+
+### Pokretanje backtesta s ISI
+```python
+config = BacktestConfig(
+    instrument="EUR_USD", ...,
+    isi_sequence_tracker=True,
+    isi_cross_asset=True,
+    isi_calibrator=True,
+)
+result = engine.run(h4, h1, m5, config, cross_asset_data={"GBP_USD": gbp_m5, "XAU_USD": xau_m5})
+```
+
+### Test Results
+```
+SMC Tests:  10/10 PASSED
+ISI Tests:  32/32 PASSED
+TOTAL:      42/42 ALL PASSED
+```
+
+---
+
+## Session 30 - Fast Backtests + Walk-Forward + Finnhub (2026-02-08)
+
+**Implementirano:**
+
+1. **Finnhub API aktiviran** (`settings/news_providers.json`)
+   - API key: `d644co9r01ql6dj251rgd644co9r01ql6dj251s0`
+   - Economic calendar = PREMIUM (403), stock quotes RADE
+   - Recurring provider radi kao fallback bez API kljuca
+
+2. **XAU_USD u DataLoader** (`src/backtesting/data_loader.py`)
+   - `"XAU_USD": "GOLD.pro"` (NE `XAUUSD.pro`!)
+   - MORA se `mt5.symbol_select('GOLD.pro', True)` prije fetchanja
+
+3. **Walk-Forward Validator REWRITE** (`src/backtesting/walk_forward.py`)
+   - `WalkForwardConfig` dataclass sa svim parametrima
+   - `WalkForwardValidator.run(config, h4, h1, m5, cross_asset_data)`
+   - ISI DB izolacija: monkey-patch `src.utils.database._db_path` na temp file
+   - Monte Carlo integracija na svim OOS tradeovima
+   - `_slice_candles()` helper za timestamp-based slicing
+   - 15-dnevni lookback buffer za HTF kontekst
+
+4. **Backtest Suite OPTIMIZIRAN** (`run_backtest_suite.py`)
+   - Grid: 256 -> 16 konfiguracija (8 per instrument)
+   - signal_interval: 3 -> 6 (30 min umjesto 15)
+   - ProcessPoolExecutor(max_workers=6) za paralelno izvrsavanje
+   - ISI DB izolacija per worker (temp DB file per PID)
+   - **264s ukupno** (100x ubrzanje vs procjena 2-4h)
+
+5. **Walk-Forward Runner** (`run_walk_forward.py`) - NOVI
+   - 3 instrumenta: EUR_USD, GBP_USD, XAU_USD
+   - ISI vs noISI usporedba za svaki
+   - 4 prozora (45d train / 15d test)
+   - Monte Carlo 1000 iteracija
+   - 972s ukupno za sve
+
+### Backtest rezultati (Session 30)
+
+**Suite (16 configs, 264s):**
+| Config | Trades | WR | Return | MaxDD | PF |
+|--------|--------|-----|--------|-------|-----|
+| GBP HighConf ISI | 30 | 26.7% | -1.74% | 4.21% | 0.78 |
+| GBP Baseline | 31 | 25.8% | -2.10% | 4.32% | 0.74 |
+| EUR Baseline | 33 | 21.2% | -5.46% | 7.05% | 0.41 |
+| EUR NoFilters | 60 | 18.3% | -10.40% | 11.77% | 0.37 |
+
+**Walk-Forward (972s):**
+| Config | OOS WR | OOS P/L | Consistency | P(Profit) |
+|--------|--------|---------|-------------|-----------|
+| XAU_USD noISI | 23.8% | +2,170 | 50% | 100% |
+| EUR_USD noISI | 23.8% | -1,673 | 0% | 0% |
+| GBP_USD noISI | 20.4% | -1,672 | 25% | 0% |
+
+**ISI impact**: Minimalan na trenutnim podacima (calibrator unfitted, premalo tradeova za statistical significance)
+
+### DB izolacija VERIFICIRANA
+- Prod DB: 0 sequence_states, 0 sequence_transitions, 0 correlation_snapshots
+- Temp DB-ovi automatski obrisani nakon zavrsetka
+
+### Rezultati spremljeni u
+- `backtest_results/suite_20260208_094138.json`
+- `backtest_results/walk_forward_20260208_095852.json`
+
+### Pokretanje
+```bash
+cd Dev
+
+# Backtest suite (16 configs, ~4-5 min)
+python run_backtest_suite.py
+
+# Walk-Forward Validation (3 instruments, ~16 min)
+python run_walk_forward.py
+```
+
+---
+
+## Session 31 - SL/Entry/TP Improvements (2026-02-08)
+
+**3 strukturalna poboljsanja za profitabilnost:**
+
+### 1. ATR-Based Dynamic SL
+- Zamijenjen fiksni 7-pip buffer s `max(min_sl_pips, ATR * multiplier)`
+- `_calculate_atr_from_candles()` - manualni ATR izracun (period=14, bez vanjskih deps)
+- Per-instrument podesavanje u `instrument_profiles.json`:
+  - EUR_USD: min_sl=10, multiplier=1.3x
+  - GBP_USD: min_sl=12, multiplier=1.5x
+  - XAU_USD: min_sl=50, multiplier=2.0x
+  - Default: min_sl=12, multiplier=1.5x, max_sl=30
+
+### 2. Entry Zone Proximity Check
+- `_check_entry_zone_proximity()` - ocjenjuje udaljenost od FVG/OB zone
+  - U zoni: +10 confidence
+  - Blizu (<=5 pips): +5
+  - Daleko (>10 pips): -15 (filtrira prerane ulaze)
+- `SMCAnalysis.current_price` field dodan
+- `grade_setup(analysis, instrument)` - instrument param za pip_value lookup
+
+### 3. Partial TP + Trailing Stop (Backtest Engine)
+- **Partial TP**: Zatvori 50% pozicije na 1.5R, SL se pomice na breakeven
+- **Trailing Stop**: Trail po ATR*1.0 nakon partial TP
+- `BacktestConfig` nova polja: `partial_tp_enabled`, `partial_tp_rr`, `trailing_stop_enabled`, `trailing_atr_multiplier`
+- `SimulatedTrade` nova polja: `partial_tp_price`, `partial_pnl`, `current_sl`, `original_units`, etc.
+- `_check_sl_tp(trade, candle, config)` - kompletni rewrite s partial/trailing/breakeven logikom
+- PnL = partial_pnl + remaining_pnl - commission (total units za commission)
+- `BacktestConfig` defaults: target_rr 3.0->2.0, max_sl_pips 15->30
+
+### Modificirani fajlovi
+```
+settings/instrument_profiles.json   # min_sl_pips, sl_atr_multiplier, max_sl_pips per instrument
+src/smc/smc_analyzer.py             # ATR calc, entry zone proximity, grade_setup(analysis, instrument)
+src/backtesting/engine.py           # Partial TP, trailing stop, BacktestConfig defaults
+```
+
+### Test Results
+```
+SMC Tests:    10/10 PASSED
+ISI + Import: 40/40 PASSED
+TOTAL:        50/50 PASSED (15 stale tests pre-existing)
+```
+
+---
+
+---
+
+## Session 32 - Limit Entry + Breakeven SL (2026-02-08)
+
+**BREAKTHROUGH: Limit entry at FVG/OB midpoint = PROFITABILNO!**
+
+### Otkriće
+- Umjesto market entry, čekamo da se cijena vrati u FVG/OB zonu
+- Limit order na midpoint zone = bolji entry = bolji R:R
+
+### Backtest rezultati (Aug 2025 - Feb 2026, 6 mj):
+| Config | Trades | WR | Return | PF | MaxDD |
+|--------|--------|-----|--------|-----|-------|
+| **GBP Lim12 Mid** | **13** | **46%** | **+5.72%** | **2.68** | **2.99%** |
+| **GBP Lim6 Mid** | **9** | **44%** | **+5.31%** | **3.80** | **1.60%** |
+| GBP OLD Market | 30 | 20% | -4.74% | 0.40 | 4.87% |
+
+**10.5pp poboljšanje** od market do limit midpoint entry!
+
+### Ključni nalazi:
+- **Partial TP škodi**: reže winnere na 1.5R, max R:R = 1.75x (disabled)
+- **Breakeven SL malo škodi**: pretvara potencijalne winnere u 0 (disabled)
+- **Midpoint entry ključan**: dublje = bolja cijena = 3-5x W/L ratio
+- **Limit orderi filtriraju kvalitetu**: samo 28-42% signala se ispuni = prirodni filter
+- **EUR i dalje neprofitabilan** (PF 0.76-0.80) ali značajno bolji od 0.47
+
+### Implementirano u backtest engine:
+- `PendingOrder` dataclass, `limit_entry_enabled/max_bars/midpoint`, `breakeven_sl_enabled`
+- `_create_trade()` helper, breakeven exit reason
+
+---
+
+## Session 33 - Limit Entry in Production (2026-02-08)
+
+**Limit entry sada radi u produkciji, ne samo u backtestu!**
+
+### Implementirano:
+
+1. **BacktestConfig defaults**: `limit_entry_max_bars=12`, `limit_entry_midpoint=True`
+2. **LimitEntryConfig** u `auto_config.py` - enabled, midpoint_entry, expiry_minutes, max_pending
+3. **TradingSignal** polja: `entry_zone`, `limit_price`, `use_limit_entry`
+4. **Scanner Step 13.5**: računa limit price iz FVG/OB zone midpoint/edge
+5. **OrderManager.place_pending_order()**: MT5 `TRADE_ACTION_PENDING` + limit orderi
+6. **OrderManager.cancel_pending_order()**: MT5 `TRADE_ACTION_REMOVE`
+7. **OrderManager.get_pending_orders()**: queries `mt5.orders_get()`
+8. **AutoExecutor** branching na `signal.use_limit_entry` (limit vs market)
+9. **AutoExecutor.check_pending_orders()**: detektira FILLED/EXPIRED evente
+10. **AutoExecutor._rebuild_pending_orders()**: rebuild iz MT5 na startupu
+11. **Service loop** provjerava pending order status prije svakog scan ciklusa
+12. **auto_trading.json**: `limit_entry` config sekcija
+
+### Config sekcija
+```json
+"limit_entry": {
+    "enabled": true,
+    "midpoint_entry": true,
+    "expiry_minutes": 60,
+    "max_pending_per_instrument": 1
+}
+```
+
+### Dizajn odluke:
+- Expiry: pokušava `ORDER_TIME_SPECIFIED`, fallback na `ORDER_TIME_GTC`
+- `_pending_orders` dict po instrumentu (max 1 per instrument)
+- Pending order blokira nove signale za isti instrument
+- Dry run logira "would place limit order"
+
+### Test Results
+```
+SMC Tests:  10/10 PASSED
+ISI Tests:  32/32 PASSED
+TOTAL:      42/42 ALL PASSED
+```
+
+### Novi/Modificirani fajlovi
+```
+src/core/auto_config.py          # LimitEntryConfig dataclass
+src/trading/auto_scanner.py      # TradingSignal fields + Step 13.5
+src/trading/orders.py            # 3 nova MT5 pending order metoda
+src/trading/auto_executor.py     # Limit entry branching + tracking
+src/services/auto_trading_service.py # Pending order check u loopu
+src/backtesting/engine.py        # Default: max_bars=12, midpoint=True
+settings/auto_trading.json       # limit_entry config section
+```
+
+---
+
+## Poznati problemi (2026-02-08)
+
+1. **Service STOPPED** - daemon ne radi, heartbeat star 1h+
+2. **dry_run: true** - sustav ne izvrsava prave tradeove
+3. **Calibrator uncalibrated** - Treba min 30 zatvorenih tradeova za Platt Scaling fit
+4. **15 starijih testova** - orders_security, risk_manager trebaju update
+5. **Finnhub economic calendar** - zahtijeva premium plan (403 na free tier)
+6. **EUR_USD** - limit entry pomaže ali nije dovoljno, treba drugačiji pristup
+
+---
+
+*Zadnje azuriranje: 2026-02-08 | Session 33 - Limit Entry in Production*

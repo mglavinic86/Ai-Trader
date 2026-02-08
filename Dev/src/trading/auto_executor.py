@@ -91,6 +91,16 @@ class AutoExecutor:
         self._cooldown_until: Optional[datetime] = None
         self._last_reset_date: Optional[datetime] = None
 
+        # STOP DAY tracking
+        self._daily_losses: int = 0
+        self._stop_day_active: bool = False
+
+        # Pending limit orders tracking: instrument -> {order_ticket, signal, placed_at, expiry_minutes}
+        self._pending_orders: Dict[str, dict] = {}
+
+        # Rebuild pending orders from MT5 on startup
+        self._rebuild_pending_orders()
+
         # Statistics
         self._stats = {
             "total_executed": 0,
@@ -119,29 +129,36 @@ class AutoExecutor:
         if emergency_controller.is_stopped():
             return self._create_skip_result(signal, "Emergency stop active")
 
-        # 2. Check dry run mode
+        # 2. Check STOP DAY
+        if self._stop_day_active:
+            return self._create_skip_result(
+                signal,
+                f"STOP DAY active ({self._daily_losses} losses today). Trading resumes tomorrow."
+            )
+
+        # 3. Check dry run mode
         if self.config.dry_run:
             logger.info(f"DRY RUN: Would execute {signal.instrument} {signal.direction}")
             return self._create_skip_result(signal, "Dry run mode - not executing")
 
-        # 3. Check cooldown
+        # 4. Check cooldown
         if self._is_in_cooldown():
             return self._create_skip_result(
                 signal,
                 f"In cooldown until {self._cooldown_until.isoformat()}"
             )
 
-        # 4. Check daily trade limits
+        # 5. Check daily trade limits
         can_trade, limit_reason = self._check_trade_limits(signal.instrument)
         if not can_trade:
             return self._create_skip_result(signal, limit_reason)
 
-        # 5. Run full validation
+        # 6. Run full validation
         validation_ok, validation_reason = self._validate_signal(signal)
         if not validation_ok:
             return self._create_skip_result(signal, validation_reason)
 
-        # 6. Calculate position size
+        # 7. Calculate position size
         size_result = self._calculate_position_size(signal)
         if not size_result["can_trade"]:
             return self._create_skip_result(signal, f"Position sizing: {size_result['reason']}")
@@ -150,7 +167,7 @@ class AutoExecutor:
         if signal.direction == "SHORT":
             units = -units
 
-        # 7. AI VALIDATION - Claude decides!
+        # 8. AI VALIDATION - Claude decides!
         if self.config.should_use_ai_validation():
             ai_result = self._validate_with_ai(signal)
             if ai_result is None:
@@ -196,65 +213,142 @@ class AutoExecutor:
                     }
                 })
 
-        # 8. Execute trade
+        # 9. Execute trade (limit or market)
         try:
-            order_result = self.order_manager.open_position(
-                instrument=signal.instrument,
-                units=units,
-                stop_loss=signal.stop_loss,
-                take_profit=signal.take_profit,
-                confidence=signal.confidence,
-                risk_amount=size_result["risk_amount"]
-            )
+            if signal.use_limit_entry and signal.limit_price:
+                # === LIMIT ENTRY: Place pending order ===
+                expiry_minutes = self.config.limit_entry.expiry_minutes if hasattr(self.config, 'limit_entry') else 60
 
-            if order_result.success:
-                self._record_execution(signal, order_result)
-                logger.info(
-                    f"AUTO TRADE EXECUTED: {signal.instrument} {signal.direction} "
-                    f"units={units} conf={signal.confidence}%"
+                if self.config.dry_run:
+                    logger.info(
+                        f"DRY RUN: Would place LIMIT ORDER {signal.instrument} {signal.direction} "
+                        f"@ {signal.limit_price:.5f} (expiry {expiry_minutes}min)"
+                    )
+                    return self._create_skip_result(signal, "Dry run mode - would place limit order")
+
+                order_result = self.order_manager.place_pending_order(
+                    instrument=signal.instrument,
+                    units=units,
+                    limit_price=signal.limit_price,
+                    stop_loss=signal.stop_loss,
+                    take_profit=signal.take_profit,
+                    expiry_minutes=expiry_minutes,
+                    confidence=signal.confidence,
+                    risk_amount=size_result["risk_amount"],
                 )
 
-                # Log to activity - TRADE EXECUTED
-                db.log_activity({
-                    "activity_type": "TRADE_EXECUTED",
-                    "instrument": signal.instrument,
-                    "direction": signal.direction,
-                    "confidence": signal.confidence,
-                    "decision": "EXECUTE",
-                    "reasoning": f"Trade opened successfully! Order #{order_result.order_id}, Units: {abs(units)}, Risk: {size_result['risk_amount']:.2f}",
-                    "trade_id": order_result.trade_id,
-                    "details": {
-                        "order_id": order_result.order_id,
-                        "trade_id": order_result.trade_id,
-                        "units": abs(units),
-                        "entry_price": signal.entry_price,
+                if order_result.success:
+                    # Track the pending order
+                    self._pending_orders[signal.instrument] = {
+                        "order_ticket": int(order_result.order_id),
+                        "instrument": signal.instrument,
+                        "direction": signal.direction,
+                        "limit_price": signal.limit_price,
                         "stop_loss": signal.stop_loss,
                         "take_profit": signal.take_profit,
-                        "risk_reward": signal.risk_reward,
-                        "risk_amount": size_result["risk_amount"],
-                        "confidence": signal.confidence
+                        "units": units,
+                        "confidence": signal.confidence,
+                        "placed_at": datetime.now(timezone.utc).isoformat(),
+                        "expiry_minutes": expiry_minutes,
                     }
-                })
 
-                # Update trade source to AUTO_SCALPING (trade already logged by orders.py)
-                try:
-                    db.update_trade_source(order_result.trade_id, "AUTO_SCALPING")
-                except Exception as e:
-                    logger.warning(f"Could not update trade source: {e}")
+                    logger.info(
+                        f"LIMIT ORDER PLACED: {signal.instrument} {signal.direction} "
+                        f"@ {signal.limit_price:.5f} order=#{order_result.order_id}"
+                    )
 
-                # Increment learning mode trade counter
-                self._handle_learning_mode_increment()
+                    db.log_activity({
+                        "activity_type": "LIMIT_ORDER_PLACED",
+                        "instrument": signal.instrument,
+                        "direction": signal.direction,
+                        "confidence": signal.confidence,
+                        "decision": "LIMIT_ORDER",
+                        "reasoning": f"Limit order placed @ {signal.limit_price:.5f}, expires in {expiry_minutes}min",
+                        "details": {
+                            "order_id": order_result.order_id,
+                            "limit_price": signal.limit_price,
+                            "entry_zone": list(signal.entry_zone) if signal.entry_zone else None,
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
+                            "risk_reward": signal.risk_reward,
+                            "expiry_minutes": expiry_minutes,
+                        }
+                    })
 
-                return ExecutionResult(
-                    signal=signal,
-                    executed=True,
-                    order_result=order_result
-                )
+                    # Record as execution (pending)
+                    self._record_execution(signal, order_result)
+                    self._handle_learning_mode_increment()
+
+                    return ExecutionResult(
+                        signal=signal,
+                        executed=True,
+                        order_result=order_result
+                    )
+                else:
+                    return self._create_skip_result(
+                        signal,
+                        f"Limit order failed: {order_result.error}"
+                    )
+
             else:
-                return self._create_skip_result(
-                    signal,
-                    f"Order failed: {order_result.error}"
+                # === MARKET ENTRY: Existing behavior ===
+                order_result = self.order_manager.open_position(
+                    instrument=signal.instrument,
+                    units=units,
+                    stop_loss=signal.stop_loss,
+                    take_profit=signal.take_profit,
+                    confidence=signal.confidence,
+                    risk_amount=size_result["risk_amount"]
                 )
+
+                if order_result.success:
+                    self._record_execution(signal, order_result)
+                    logger.info(
+                        f"AUTO TRADE EXECUTED: {signal.instrument} {signal.direction} "
+                        f"units={units} conf={signal.confidence}%"
+                    )
+
+                    # Log to activity - TRADE EXECUTED
+                    db.log_activity({
+                        "activity_type": "TRADE_EXECUTED",
+                        "instrument": signal.instrument,
+                        "direction": signal.direction,
+                        "confidence": signal.confidence,
+                        "decision": "EXECUTE",
+                        "reasoning": f"Trade opened successfully! Order #{order_result.order_id}, Units: {abs(units)}, Risk: {size_result['risk_amount']:.2f}",
+                        "trade_id": order_result.trade_id,
+                        "details": {
+                            "order_id": order_result.order_id,
+                            "trade_id": order_result.trade_id,
+                            "units": abs(units),
+                            "entry_price": signal.entry_price,
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
+                            "risk_reward": signal.risk_reward,
+                            "risk_amount": size_result["risk_amount"],
+                            "confidence": signal.confidence
+                        }
+                    })
+
+                    # Update trade source to AUTO_SCALPING (trade already logged by orders.py)
+                    try:
+                        db.update_trade_source(order_result.trade_id, "AUTO_SCALPING")
+                    except Exception as e:
+                        logger.warning(f"Could not update trade source: {e}")
+
+                    # Increment learning mode trade counter
+                    self._handle_learning_mode_increment()
+
+                    return ExecutionResult(
+                        signal=signal,
+                        executed=True,
+                        order_result=order_result
+                    )
+                else:
+                    return self._create_skip_result(
+                        signal,
+                        f"Order failed: {order_result.error}"
+                    )
 
         except Exception as e:
             logger.exception(f"Execution error for {signal.instrument}")
@@ -271,7 +365,7 @@ class AutoExecutor:
             SignalValidation or None if failed
         """
         try:
-            # Build signal data for AI
+            # Build signal data for AI (with SMC data)
             signal_data = {
                 "instrument": signal.instrument,
                 "direction": signal.direction,
@@ -289,6 +383,7 @@ class AutoExecutor:
                 "sentiment": signal.sentiment.sentiment_score if hasattr(signal.sentiment, 'sentiment_score') else 0,
                 "bull_case": signal.confidence_result.bull_case if hasattr(signal.confidence_result, 'bull_case') else "",
                 "bear_case": signal.confidence_result.bear_case if hasattr(signal.confidence_result, 'bear_case') else "",
+                "smc": signal.smc_analysis.to_dict() if hasattr(signal, 'smc_analysis') and signal.smc_analysis else {},
             }
 
             logger.info(f"Requesting AI validation for {signal.instrument} {signal.direction}...")
@@ -336,11 +431,135 @@ class AutoExecutor:
                 }
             })
 
+    def _rebuild_pending_orders(self) -> None:
+        """Rebuild pending orders tracking from MT5 on startup."""
+        try:
+            pending = self.order_manager.get_pending_orders()
+            for order in pending:
+                if order.get("instrument"):
+                    self._pending_orders[order["instrument"]] = {
+                        "order_ticket": order["order_ticket"],
+                        "instrument": order["instrument"],
+                        "direction": order.get("direction", "UNKNOWN"),
+                        "limit_price": order["price"],
+                        "stop_loss": order.get("sl"),
+                        "take_profit": order.get("tp"),
+                        "units": 0,
+                        "confidence": 0,
+                        "placed_at": order.get("time_setup", datetime.now(timezone.utc).isoformat()),
+                        "expiry_minutes": 60,
+                    }
+            if pending:
+                logger.info(f"Rebuilt {len(pending)} pending orders from MT5")
+        except Exception as e:
+            logger.warning(f"Could not rebuild pending orders: {e}")
+
+    def check_pending_orders(self) -> List[dict]:
+        """
+        Check status of all tracked pending orders.
+
+        Returns:
+            List of events: {"type": "FILLED"/"EXPIRED", "instrument": ..., ...}
+        """
+        events = []
+        instruments_to_remove = []
+
+        for instrument, pending in self._pending_orders.items():
+            order_ticket = pending["order_ticket"]
+            try:
+                # Check if order still exists in MT5
+                import MetaTrader5 as mt5
+                orders = mt5.orders_get(ticket=order_ticket)
+                order_exists = orders is not None and len(orders) > 0
+
+                if order_exists:
+                    # Order still pending - check internal expiry as backup
+                    continue
+
+                # Order gone - check if it was filled (position exists)
+                symbol = self.order_manager.client._convert_symbol(instrument)
+                positions = mt5.positions_get(symbol=symbol)
+                position_exists = positions is not None and len(positions) > 0
+
+                if position_exists:
+                    # FILLED: Order converted to position
+                    event = {
+                        "type": "FILLED",
+                        "instrument": instrument,
+                        "direction": pending["direction"],
+                        "order_ticket": order_ticket,
+                        "limit_price": pending["limit_price"],
+                    }
+                    events.append(event)
+                    instruments_to_remove.append(instrument)
+
+                    logger.info(
+                        f"LIMIT ORDER FILLED: {instrument} {pending['direction']} "
+                        f"@ {pending['limit_price']:.5f} (order #{order_ticket})"
+                    )
+
+                    db.log_activity({
+                        "activity_type": "LIMIT_ORDER_FILLED",
+                        "instrument": instrument,
+                        "direction": pending["direction"],
+                        "confidence": pending.get("confidence", 0),
+                        "reasoning": f"Limit order #{order_ticket} filled at {pending['limit_price']:.5f}",
+                        "details": pending,
+                    })
+
+                    # Update trade source
+                    try:
+                        # Find the position ticket
+                        for pos in positions:
+                            trade_id = str(pos.ticket)
+                            db.update_trade_source(trade_id, "AUTO_SCALPING_LIMIT")
+                            break
+                    except Exception as e:
+                        logger.warning(f"Could not update trade source for filled limit: {e}")
+
+                else:
+                    # EXPIRED: Order gone, no position
+                    event = {
+                        "type": "EXPIRED",
+                        "instrument": instrument,
+                        "direction": pending["direction"],
+                        "order_ticket": order_ticket,
+                        "limit_price": pending["limit_price"],
+                    }
+                    events.append(event)
+                    instruments_to_remove.append(instrument)
+
+                    logger.info(
+                        f"LIMIT ORDER EXPIRED: {instrument} {pending['direction']} "
+                        f"@ {pending['limit_price']:.5f} (order #{order_ticket})"
+                    )
+
+                    db.log_activity({
+                        "activity_type": "LIMIT_ORDER_EXPIRED",
+                        "instrument": instrument,
+                        "direction": pending["direction"],
+                        "reasoning": f"Limit order #{order_ticket} expired (price never reached {pending['limit_price']:.5f})",
+                        "details": pending,
+                    })
+
+            except Exception as e:
+                logger.warning(f"Error checking pending order for {instrument}: {e}")
+
+        # Cleanup removed orders
+        for instrument in instruments_to_remove:
+            del self._pending_orders[instrument]
+
+        return events
+
     def _check_daily_reset(self) -> None:
         """Reset daily counters if new day."""
         today = datetime.now(timezone.utc).date()
         if self._last_reset_date != today:
             self._daily_trades = {}
+            self._daily_losses = 0
+            if self._stop_day_active:
+                logger.info("STOP DAY cleared - new trading day")
+            self._stop_day_active = False
             self._last_reset_date = today
             logger.info("Daily trade counters reset")
 
@@ -386,6 +605,10 @@ class AutoExecutor:
         if instrument_trades >= max_per_instrument:
             mode = "LEARNING" if self.config.learning_mode.is_in_learning() else "PRODUCTION"
             return False, f"Instrument limit reached for {instrument} ({instrument_trades}/{max_per_instrument}) [{mode}]"
+
+        # Check if there's already a pending limit order for this instrument
+        if instrument in self._pending_orders:
+            return False, f"Pending limit order already exists for {instrument}"
 
         # Max concurrent positions - check BOTH MT5 and database
         try:
@@ -568,6 +791,7 @@ class AutoExecutor:
         Record result of a closed trade.
 
         Called by trade lifecycle handler to track wins/losses for cooldown.
+        Also triggers STOP DAY if daily loss limit reached.
         """
         self._stats["total_pnl"] += pnl
 
@@ -579,6 +803,27 @@ class AutoExecutor:
         else:
             self._stats["losses"] += 1
             self._loss_streak += 1
+            self._daily_losses += 1
+
+            # Check STOP DAY trigger
+            if (self.config.stop_day.enabled and
+                    self._daily_losses >= self.config.stop_day.loss_trigger and
+                    not self._stop_day_active):
+                self._stop_day_active = True
+                logger.warning(
+                    f"STOP DAY ACTIVATED: {self._daily_losses} losses today "
+                    f"(trigger: {self.config.stop_day.loss_trigger}). "
+                    f"No more trades until tomorrow."
+                )
+                db.log_activity({
+                    "activity_type": "STOP_DAY",
+                    "reasoning": f"STOP DAY: {self._daily_losses} losses today. Trading stopped.",
+                    "details": {
+                        "daily_losses": self._daily_losses,
+                        "loss_trigger": self.config.stop_day.loss_trigger,
+                        "total_pnl": self._stats["total_pnl"]
+                    }
+                })
 
             # Check if should enter cooldown (uses learning mode settings)
             loss_trigger, cooldown_minutes = self.config.get_active_cooldown_settings()

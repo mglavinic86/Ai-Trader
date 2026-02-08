@@ -1,8 +1,23 @@
 """
-Auto-Scanner - Market scanning engine for auto-trading.
+Auto-Scanner - SMC-based market scanning engine for auto-trading.
 
-Continuously scans configured instruments for trading opportunities.
-Uses existing analysis components (Technical, Sentiment, Confidence).
+Scans configured instruments using Smart Money Concepts:
+1. Price → Spread → Session → News (pre-filters)
+2. Candles (H4+H1+M5)
+3. SMC HTF Analysis (H4/H1: structure + liquidity map)
+4. HTF Bias check (NEUTRAL = NO TRADE)
+5. SMC LTF Analysis (M5: sweep + CHoCH/BOS + FVG + displacement)
+6. Sweep check (NO SWEEP = NO TRADE) ← HARD GATE
+7. CHoCH/BOS check (NONE = NO TRADE) ← HARD GATE
+8. Setup Grading (A+/A/B/NO_TRADE)
+9. Grade → Confidence mapping
+10. Regime filter (still useful)
+11. Sentiment (additional edge)
+12. Learning engine (adapts from history)
+13. Filter chain (self-upgrade)
+14. SL/TP (SMC-based: SL behind sweep, TP at liquidity)
+15. R:R check (min 1:3)
+16. Signal
 
 Usage:
     from src.trading.auto_scanner import MarketScanner
@@ -24,8 +39,10 @@ from src.analysis.sentiment import SentimentAnalyzer, SentimentResult
 from src.analysis.adversarial import AdversarialEngine
 from src.analysis.confidence import ConfidenceCalculator, ConfidenceResult
 from src.analysis.learning_engine import LearningEngine
-from src.analysis.ai_override import AIOverrideEvaluator, AIOverrideConfig, OverrideContext
-from src.core.tuning_config import TunableSettings
+from src.smc import SMCAnalyzer, SMCAnalysis
+from src.smc.sequence_tracker import SequenceTracker
+from src.analysis.confidence_calibrator import ConfidenceCalibrator
+from src.analysis.cross_asset_detector import CrossAssetDetector
 from src.utils.database import db
 from src.utils.logger import logger
 from src.utils.instrument_profiles import get_profile, is_in_session
@@ -49,6 +66,19 @@ class TradingSignal:
     sentiment: SentimentResult
     confidence_result: ConfidenceResult
 
+    # SMC Analysis
+    smc_analysis: Optional[SMCAnalysis] = None
+
+    # ISI fields
+    raw_confidence: Optional[int] = None  # Pre-calibration confidence
+    sequence_phase: Optional[int] = None
+    sequence_phase_name: Optional[str] = None
+
+    # Limit entry fields
+    entry_zone: Optional[tuple] = None    # (low, high) of FVG/OB zone
+    limit_price: Optional[float] = None   # Price for limit order
+    use_limit_entry: bool = False         # Whether to use limit vs market
+
     # Metadata
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     scan_duration_ms: int = 0
@@ -56,7 +86,7 @@ class TradingSignal:
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
-        return {
+        result = {
             "instrument": self.instrument,
             "direction": self.direction,
             "confidence": self.confidence,
@@ -66,8 +96,17 @@ class TradingSignal:
             "risk_reward": self.risk_reward,
             "timestamp": self.timestamp.isoformat(),
             "scan_duration_ms": self.scan_duration_ms,
-            "reason": self.reason
+            "reason": self.reason,
+            "raw_confidence": self.raw_confidence,
+            "sequence_phase": self.sequence_phase,
+            "sequence_phase_name": self.sequence_phase_name,
+            "limit_price": self.limit_price,
+            "use_limit_entry": self.use_limit_entry,
+            "entry_zone": list(self.entry_zone) if self.entry_zone else None,
         }
+        if self.smc_analysis:
+            result["smc"] = self.smc_analysis.to_dict()
+        return result
 
 
 @dataclass
@@ -83,26 +122,21 @@ class ScanResult:
 
 class MarketScanner:
     """
-    Market scanner for auto-trading.
+    SMC-based market scanner for auto-trading.
 
-    Scans all configured instruments and returns trading signals
-    when opportunities are found.
+    Scans all configured instruments using Smart Money Concepts
+    and returns trading signals when high-quality setups are found.
     """
 
     def __init__(self, client: MT5Client, config: AutoTradingConfig):
-        """
-        Initialize scanner.
-
-        Args:
-            client: MT5 client for market data
-            config: Auto-trading configuration
-        """
         self.client = client
         self.config = config
 
-        # Analysis components
+        # SMC Analyzer (replaces old technical direction logic)
+        self.smc_analyzer = SMCAnalyzer()
+
+        # Keep these for supplementary analysis
         self.technical_analyzer = TechnicalAnalyzer()
-        # Use external sentiment if enabled in config (Phase 2 Enhancement)
         use_external = getattr(config, 'external_sentiment', None)
         use_external_sentiment = use_external.enabled if use_external else False
         self.sentiment_analyzer = SentimentAnalyzer(use_external=use_external_sentiment)
@@ -110,53 +144,37 @@ class MarketScanner:
         self.confidence_calculator = ConfidenceCalculator()
         self.learning_engine = LearningEngine()
 
-        # AI Override evaluator
-        override_config = AIOverrideConfig(
-            enabled=config.ai_override.enabled,
-            min_ai_confidence=config.ai_override.min_ai_confidence,
-            max_overrides_per_day=config.ai_override.max_overrides_per_day,
-            cooldown_after_loss_minutes=config.ai_override.cooldown_after_loss_minutes,
-            adjustable_settings=config.ai_override.adjustable_settings,
-            learning=config.ai_override.learning,
-        )
-        self.override_evaluator = AIOverrideEvaluator(override_config)
+        # ISI components
+        self.sequence_tracker = SequenceTracker(db)
+        self.calibrator = ConfidenceCalibrator(db)
+        self.cross_asset = CrossAssetDetector(client, db)
 
         # Thread pool for parallel scanning
         self._executor = ThreadPoolExecutor(max_workers=4)
 
         # Filter registry for self-upgrade system
         self.filter_registry = get_filter_registry()
-        # Load any AI-generated filters
         ai_filters_loaded = self.filter_registry.load_ai_generated_filters()
 
-        override_status = "ENABLED" if config.ai_override.enabled else "DISABLED"
         filter_status = f"{self.filter_registry.get_stats()['total_filters']} filters ({ai_filters_loaded} AI)"
-        logger.info(f"MarketScanner initialized with {len(config.instruments)} instruments (Learning Engine ACTIVE, AI Override {override_status}, Filters: {filter_status})")
+        calibration_status = "fitted" if self.calibrator.is_fitted else "uncalibrated"
+        logger.info(
+            f"MarketScanner initialized [SMC+ISI MODE] with {len(config.instruments)} instruments "
+            f"(Filters: {filter_status}, Calibration: {calibration_status})"
+        )
 
     def scan_all_instruments(self) -> List[TradingSignal]:
-        """
-        Scan all configured instruments for trading opportunities.
-
-        Returns:
-            List of trading signals (only valid opportunities)
-        """
+        """Scan all configured instruments for SMC trading opportunities."""
         signals = []
         start_time = datetime.now(timezone.utc)
 
-        # Log scan start with learning mode info
-        learning_info = {
-            "learning_mode": self.config.learning_mode.is_in_learning(),
-            "learning_progress": f"{self.config.learning_mode.current_trades}/{self.config.learning_mode.target_trades}",
-            "active_threshold": self.config.get_active_threshold()
-        }
         db.log_activity({
             "activity_type": "SCAN_START",
-            "reasoning": f"Starting scan of {len(self.config.instruments)} instruments",
+            "reasoning": f"Starting SMC scan of {len(self.config.instruments)} instruments",
             "details": {
                 "instruments": self.config.instruments,
-                "mode": self.config.mode,
+                "mode": "SMC",
                 "min_confidence": self.config.get_active_threshold(),
-                **learning_info
             }
         })
 
@@ -178,37 +196,28 @@ class MarketScanner:
                 })
 
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
-        logger.info(f"Scan complete: {len(signals)} signals from {len(self.config.instruments)} instruments in {duration_ms}ms")
+        logger.info(f"SMC Scan complete: {len(signals)} signals from {len(self.config.instruments)} instruments in {duration_ms}ms")
 
-        # Log scan complete
         db.log_activity({
             "activity_type": "SCAN_COMPLETE",
-            "reasoning": f"Scan complete: found {len(signals)} signals",
+            "reasoning": f"SMC scan complete: found {len(signals)} signals",
             "duration_ms": duration_ms,
             "details": {
                 "instruments_scanned": len(self.config.instruments),
                 "signals_found": len(signals),
-                "signal_instruments": [s.instrument for s in signals]
+                "signal_instruments": [s.instrument for s in signals],
             }
         })
 
         return signals
 
     async def scan_all_instruments_async(self) -> List[TradingSignal]:
-        """
-        Scan all instruments in parallel using async.
-
-        Returns:
-            List of trading signals
-        """
+        """Scan all instruments in parallel using async."""
         loop = asyncio.get_event_loop()
-
-        # Run scans in thread pool
         tasks = [
             loop.run_in_executor(self._executor, self.scan_instrument, instrument)
             for instrument in self.config.instruments
         ]
-
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         signals = []
@@ -218,559 +227,291 @@ class MarketScanner:
                 continue
             if result.has_signal and result.signal:
                 signals.append(result.signal)
-
         return signals
 
     def scan_instrument(self, instrument: str) -> ScanResult:
         """
-        Scan a single instrument for trading opportunity.
+        Scan a single instrument using SMC pipeline.
 
-        Args:
-            instrument: Instrument symbol (e.g., "EURUSD")
-
-        Returns:
-            ScanResult with signal if opportunity found
+        Pipeline:
+        Price → Spread → Session → News → Candles(H4+H1+M5)
+        → SMC HTF(H4/H1) → HTF Bias → SMC LTF(M5) → Sweep → CHoCH/BOS
+        → Grading → Confidence → Regime → Sentiment → Learning → Filters
+        → SL/TP → R:R → Signal
         """
         start_time = datetime.now(timezone.utc)
 
-        # Log start of analysis for this instrument
         db.log_activity({
             "activity_type": "ANALYZING",
             "instrument": instrument,
-            "reasoning": f"Starting analysis of {instrument}..."
+            "reasoning": f"Starting SMC analysis of {instrument}..."
         })
 
         try:
-            # 1. Get current price
+            # ==========================================
+            # STEP 1: Pre-filters (quick rejections)
+            # ==========================================
+
+            # 1a. Get current price
             price = self.client.get_price(instrument)
 
-            # 2. Check spread
+            # 1b. Check spread
             if not self._check_spread(price, instrument):
-                skip_reason = f"Spread too high: {price['spread_pips']:.1f} pips"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "decision": "SKIP",
-                    "reasoning": skip_reason,
-                    "details": {"spread_pips": price.get("spread_pips"), "max_spread": self.config.scalping.max_spread_pips}
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+                return self._skip(instrument, start_time,
+                                  f"Spread too high: {price['spread_pips']:.1f} pips",
+                                  {"spread_pips": price.get("spread_pips")})
 
-            # 2.5 Check trading session EARLY (before heavy analysis)
+            # 1c. Check trading session
             profile = get_profile(instrument)
             if not is_in_session(profile):
-                allowed_sessions = profile.get("sessions", [])
-                skip_reason = f"Outside trading session (allowed: {allowed_sessions})"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "decision": "SKIP",
-                    "reasoning": skip_reason,
-                    "details": {"sessions": allowed_sessions, "allow_weekends": profile.get("allow_weekends", False)}
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+                return self._skip(instrument, start_time,
+                                  f"Outside trading session (allowed: {profile.get('sessions', [])})")
 
-            # 2.6 Check news calendar (avoid high-impact events)
+            # 1d. Check news calendar
             should_avoid, news_reason = news_filter.should_avoid_trade(instrument)
             if should_avoid:
-                skip_reason = f"News filter: {news_reason}"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "decision": "SKIP",
-                    "reasoning": skip_reason,
-                    "details": {"news_event": news_reason}
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+                return self._skip(instrument, start_time,
+                                  f"News filter: {news_reason}")
 
-            # 3. Get candles for analysis (M5 for scalping, H1 otherwise)
-            timeframe = "M5" if self.config.mode == "scalping" else "H1"
-            candles = self.client.get_candles(instrument, timeframe, 100)
-            if len(candles) < 30:
-                skip_reason = "Not enough candle data"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "decision": "SKIP",
-                    "reasoning": skip_reason,
-                    "details": {"candles_available": len(candles), "required": 30}
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+            # ==========================================
+            # STEP 2: Fetch candle data (H4, H1, M5)
+            # ==========================================
 
-            # 4. Technical analysis (primary timeframe)
-            technical = self.technical_analyzer.analyze(candles, instrument)
+            # H4 candles for HTF structure
+            h4_candles = self.client.get_candles(instrument, "H4", 100)
 
-            # 4.1 Market Regime Filter (Phase 1 Enhancement)
+            # H1 candles for liquidity map + session levels
+            h1_candles = self.client.get_candles(instrument, "H1", 100)
+
+            # M5 candles for LTF signal
+            m5_candles = self.client.get_candles(instrument, "M5", 100)
+
+            if len(m5_candles) < 30:
+                return self._skip(instrument, start_time,
+                                  f"Not enough M5 data ({len(m5_candles)} candles)")
+
+            # ==========================================
+            # STEP 3: SMC HTF Analysis (H4/H1)
+            # ==========================================
+
+            htf_result = self.smc_analyzer.analyze_htf(h4_candles, h1_candles, instrument)
+
+            # HARD GATE: HTF must not be neutral
+            if htf_result["htf_bias"] == "NEUTRAL":
+                return self._skip(instrument, start_time,
+                                  f"HTF bias NEUTRAL (structure: {htf_result['htf_structure']})",
+                                  {"htf_structure": htf_result["htf_structure"]})
+
+            # ==========================================
+            # STEP 4: SMC LTF Analysis (M5)
+            # ==========================================
+
+            smc_analysis = self.smc_analyzer.analyze_ltf(m5_candles, htf_result, instrument)
+
+            # HARD GATE: Must have sweep
+            if not smc_analysis.sweep_detected:
+                return self._skip(instrument, start_time,
+                                  "No liquidity sweep detected",
+                                  {"htf_bias": htf_result["htf_bias"]})
+
+            # HARD GATE: Must have CHoCH or BOS
+            if not smc_analysis.ltf_choch and not smc_analysis.ltf_bos:
+                return self._skip(instrument, start_time,
+                                  "No CHoCH or BOS on LTF",
+                                  {"sweep": smc_analysis.sweep_detected.to_dict()})
+
+            # HARD GATE: Must have direction
+            if not smc_analysis.direction:
+                return self._skip(instrument, start_time,
+                                  "No clear SMC direction",
+                                  {"htf_bias": htf_result["htf_bias"],
+                                   "grade_reasons": smc_analysis.grade_reasons})
+
+            # HARD GATE: Setup grade must be B or better
+            if smc_analysis.setup_grade == "NO_TRADE":
+                return self._skip(instrument, start_time,
+                                  f"Setup grade: NO_TRADE ({', '.join(smc_analysis.grade_reasons[:3])})")
+
+            direction = smc_analysis.direction
+
+            # ==========================================
+            # STEP 4.5: ISI Sequence Tracking
+            # ==========================================
+
+            # Still run technical first for sequence tracker input
+            technical = self.technical_analyzer.analyze(m5_candles, instrument)
+
+            seq_state = self.sequence_tracker.update(instrument, smc_analysis, technical)
+            seq_modifier = seq_state.confidence_modifier()
+
+            db.log_activity({
+                "activity_type": "SEQUENCE_UPDATE",
+                "instrument": instrument,
+                "details": {
+                    "phase": seq_state.current_phase,
+                    "phase_name": seq_state.phase_name,
+                    "phase_confidence": seq_state.phase_confidence,
+                    "confidence_modifier": seq_modifier,
+                    "completion_rate": seq_state.completion_rate,
+                }
+            })
+
+            # ==========================================
+            # STEP 5: Market Regime filter (technical already computed above)
+            # ==========================================
+
+            # 5a. Market Regime filter (still useful)
             regime_ok, regime_reason = self._check_market_regime(technical, instrument)
             if not regime_ok:
-                skip_reason = f"Regime filter: {regime_reason}"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "decision": "SKIP",
-                    "reasoning": skip_reason,
-                    "details": {
-                        "market_regime": technical.market_regime,
-                        "regime_strength": technical.regime_strength,
-                        "adx": technical.adx,
-                        "bb_width": technical.bollinger_width,
-                        "bb_percentile": technical.bollinger_width_percentile
-                    }
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+                return self._skip(instrument, start_time,
+                                  f"Regime filter: {regime_reason}",
+                                  {"market_regime": technical.market_regime,
+                                   "smc_grade": smc_analysis.setup_grade})
 
-            # 4.5 Multi-Timeframe Analysis for scalping mode
-            htf_technical = None
-            if self.config.mode == "scalping":
-                candles_h1 = self.client.get_candles(instrument, "H1", 50)
-                if len(candles_h1) >= 20:
-                    htf_technical = self.technical_analyzer.analyze(candles_h1, instrument)
+            # ==========================================
+            # STEP 6: Sentiment (additional edge)
+            # ==========================================
 
-                    # Check MTF alignment
-                    mtf_ok, mtf_reason = self._confirm_mtf_trend(technical, htf_technical)
-                    if not mtf_ok:
-                        skip_reason = f"MTF conflict: {mtf_reason}"
+            sentiment = self.sentiment_analyzer.analyze(m5_candles, technical, instrument=instrument)
 
-                        # Determine direction for override evaluation
-                        prelim_direction = None
-                        if technical.trend == "BULLISH" or technical.macd_trend == "BULLISH":
-                            prelim_direction = "LONG"
-                        elif technical.trend == "BEARISH" or technical.macd_trend == "BEARISH":
-                            prelim_direction = "SHORT"
+            # ==========================================
+            # STEP 6.5: ISI Cross-Asset Divergence
+            # ==========================================
 
-                        # Try AI Override for MTF conflict
-                        if prelim_direction:
-                            prelim_sentiment = self.sentiment_analyzer.analyze(candles, technical, instrument=instrument)
-                            override_result = self._evaluate_override(
-                                instrument=instrument,
-                                direction=prelim_direction,
-                                skip_reason=skip_reason,
-                                confidence=50,  # Preliminary confidence
-                                technical=technical,
-                                sentiment=prelim_sentiment,
-                                price=price,
-                                htf_technical=htf_technical
-                            )
+            divergence_modifier = self.cross_asset.get_confidence_modifier(instrument, direction)
 
-                            if override_result:
-                                # AI approved override - continue with signal generation
-                                logger.info(f"AI_OVERRIDE_APPLIED | {instrument} | Continuing despite MTF conflict")
-                                # Don't return - continue processing
-                            else:
-                                db.log_activity({
-                                    "activity_type": "SIGNAL_REJECTED",
-                                    "instrument": instrument,
-                                    "decision": "SKIP",
-                                    "reasoning": skip_reason,
-                                    "details": {
-                                        "m5_trend": technical.trend,
-                                        "h1_trend": htf_technical.trend,
-                                        "m5_macd": technical.macd_trend,
-                                        "h1_macd": htf_technical.macd_trend,
-                                        "override_attempted": True,
-                                        "override_result": "REJECTED"
-                                    }
-                                })
-                                return ScanResult(
-                                    instrument=instrument,
-                                    has_signal=False,
-                                    skip_reason=skip_reason,
-                                    scan_duration_ms=self._get_duration_ms(start_time)
-                                )
-                        else:
-                            db.log_activity({
-                                "activity_type": "SIGNAL_REJECTED",
-                                "instrument": instrument,
-                                "decision": "SKIP",
-                                "reasoning": skip_reason,
-                                "details": {
-                                    "m5_trend": technical.trend,
-                                    "h1_trend": htf_technical.trend,
-                                    "m5_macd": technical.macd_trend,
-                                    "h1_macd": htf_technical.macd_trend
-                                }
-                            })
-                            return ScanResult(
-                                instrument=instrument,
-                                has_signal=False,
-                                skip_reason=skip_reason,
-                                scan_duration_ms=self._get_duration_ms(start_time)
-                            )
+            # ==========================================
+            # STEP 7: Calculate confidence (SMC + ISI)
+            # ==========================================
 
-            # 5. Sentiment analysis (with external sources if enabled)
-            sentiment = self.sentiment_analyzer.analyze(candles, technical, instrument=instrument)
+            # SMC grade is primary driver, plus ISI modifiers
+            smc_confidence = smc_analysis.confidence  # From grade: A+=92, A=82, B=68
 
-            # 6. Determine direction
-            direction = self._determine_direction(technical, sentiment)
-            if not direction:
-                skip_reason = "No clear direction"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "technical_score": technical.trend_strength if hasattr(technical, 'trend_strength') else None,
-                    "sentiment_score": sentiment.sentiment_score,
-                    "decision": "SKIP",
-                    "reasoning": f"{skip_reason} - Trend: {technical.trend}, RSI: {technical.rsi:.1f}, MACD: {technical.macd_trend}",
-                    "details": {
-                        "trend": technical.trend,
-                        "rsi": technical.rsi,
-                        "macd_trend": technical.macd_trend,
-                        "sentiment": sentiment.sentiment_score
-                    }
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+            # Sentiment adjustment (-10 to +10)
+            sent_score = sentiment.sentiment_score  # -1 to +1
+            sent_adjustment = int(sent_score * 10)  # -10 to +10
+            # Align with direction
+            if direction == "SHORT":
+                sent_adjustment = -sent_adjustment
 
-            # 7. Adversarial analysis
+            # ISI: sequence + divergence modifiers
+            base_confidence = smc_confidence + sent_adjustment + seq_modifier + divergence_modifier
+
+            # Build confidence result for compatibility
             adversarial = self.adversarial_engine.analyze(
                 technical, sentiment, instrument, direction
             )
-
-            # 8. Check RAG for similar errors
-            similar_errors = db.find_similar_errors(instrument, limit=3)
-            rag_warnings = len(similar_errors)
-
-            # 9. Calculate confidence
             confidence_result = self.confidence_calculator.calculate(
-                technical, sentiment, adversarial, rag_warnings
+                technical, sentiment, adversarial, 0
             )
+            # Override with SMC+ISI-based confidence
+            raw_score = max(0, min(100, base_confidence))
 
-            # 9.5. Apply learning from past trades
+            # ISI: Bayesian calibration (Platt Scaling)
+            calibrated_score = self.calibrator.calibrate(raw_score)
+            confidence_result.confidence_score = calibrated_score
+
+            # Generate SMC-based bull/bear case
+            confidence_result.bull_case = self._build_smc_bull_case(smc_analysis)
+            confidence_result.bear_case = self._build_smc_bear_case(smc_analysis)
+
+            # ==========================================
+            # STEP 8: Learning engine adjustment
+            # ==========================================
+
             learning_context = {
                 "session": technical.session if hasattr(technical, 'session') else None,
                 "trend": technical.trend,
-                "rsi": technical.rsi,
-                # Phase 4 Enhancement: Include market regime for regime-aware learning
                 "market_regime": technical.market_regime,
                 "regime_strength": technical.regime_strength,
+                "smc_grade": smc_analysis.setup_grade,
             }
             learning_insights = self.learning_engine.get_insights_for_trade(
                 instrument, direction, learning_context
             )
 
-            # Adjust confidence based on learning
             original_confidence = confidence_result.confidence_score
             adjusted_confidence = max(0, min(100,
                 original_confidence + learning_insights.confidence_adjustment
             ))
             confidence_result.confidence_score = adjusted_confidence
 
-            # 9.55 Apply killzone boost (high-probability trading windows)
+            # Killzone boost
             in_killzone, killzone_name = self._is_in_killzone()
-            killzone_boost = 0
             if in_killzone:
-                killzone_boost = 5  # +5% confidence during killzones
-                adjusted_confidence = min(100, adjusted_confidence + killzone_boost)
+                adjusted_confidence = min(100, adjusted_confidence + 5)
                 confidence_result.confidence_score = adjusted_confidence
-                logger.info(f"Killzone boost: {killzone_name} +{killzone_boost}% -> {adjusted_confidence}%")
 
-            # Log learning application
-            if learning_insights.confidence_adjustment != 0 or killzone_boost != 0:
-                logger.info(
-                    f"Confidence adjustments: Learning={learning_insights.confidence_adjustment:+d}, "
-                    f"Killzone={killzone_boost:+d} -> {adjusted_confidence}%"
-                )
-
-            # Log analysis
-            db.log_activity({
-                "activity_type": "ANALYZING",
-                "instrument": instrument,
-                "direction": direction,
-                "technical_score": confidence_result.technical_score,
-                "sentiment_score": sentiment.sentiment_score,
-                "adversarial_score": adversarial.risk_score if hasattr(adversarial, 'risk_score') else None,
-                "confidence": confidence_result.confidence_score,
-                "reasoning": f"Analysis: Tech={confidence_result.technical_score}, Sent={sentiment.sentiment_score:.2f}, Conf={confidence_result.confidence_score}%",
-                "details": {
-                    "trend": technical.trend,
-                    "rsi": technical.rsi,
-                    "macd_trend": technical.macd_trend,
-                    "atr_pips": technical.atr_pips,
-                    "sentiment": sentiment.sentiment_score,
-                    "rag_warnings": rag_warnings,
-                    "bull_case": confidence_result.bull_case,
-                    "bear_case": confidence_result.bear_case
-                }
-            })
-
-            # 9.6. Check if learning engine recommends NOT trading
+            # Check if learning blocks trade
             if not learning_insights.should_trade:
-                skip_reason = f"Learning blocked: {', '.join(learning_insights.warnings[:2])}"
-                logger.warning(f"{instrument}: Blocked by learning - {skip_reason}")
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "direction": direction,
-                    "confidence": confidence_result.confidence_score,
-                    "decision": "LEARNING_BLOCKED",
-                    "reasoning": f"Learning engine blocked trade: {skip_reason}",
-                    "details": {
-                        "original_confidence": original_confidence,
-                        "adjusted_confidence": adjusted_confidence,
-                        "learning_adjustment": learning_insights.confidence_adjustment,
-                        "warnings": learning_insights.warnings,
-                        "adjustment_reasons": learning_insights.adjustment_reasons
-                    }
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+                return self._skip(instrument, start_time,
+                                  f"Learning blocked: {', '.join(learning_insights.warnings[:2])}",
+                                  {"smc_grade": smc_analysis.setup_grade})
 
-            # 10. Check if meets threshold (uses learning mode active settings)
+            # ==========================================
+            # STEP 9: Confidence threshold check
+            # ==========================================
+
             active_threshold = self.config.get_active_threshold()
+            instrument_threshold = profile.get("min_confidence_threshold")
+            if instrument_threshold is not None:
+                active_threshold = min(active_threshold, instrument_threshold)
+
             if confidence_result.confidence_score < active_threshold:
-                mode_label = "LEARNING" if self.config.learning_mode.is_in_learning() else "PRODUCTION"
-                skip_reason = f"Confidence {confidence_result.confidence_score}% < {active_threshold}% [{mode_label}]"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "direction": direction,
-                    "confidence": confidence_result.confidence_score,
-                    "decision": "SKIP",
-                    "reasoning": f"{skip_reason} - Below threshold. Bull: {confidence_result.bull_case[:50]}... Bear: {confidence_result.bear_case[:50]}...",
-                    "details": {
-                        "confidence": confidence_result.confidence_score,
-                        "threshold": active_threshold,
-                        "learning_mode": self.config.learning_mode.is_in_learning(),
-                        "learning_progress": f"{self.config.learning_mode.current_trades}/{self.config.learning_mode.target_trades}",
-                        "original_confidence": original_confidence,
-                        "learning_adjustment": learning_insights.confidence_adjustment,
-                        "bull_case": confidence_result.bull_case,
-                        "bear_case": confidence_result.bear_case
-                    }
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+                return self._skip(instrument, start_time,
+                                  f"Confidence {confidence_result.confidence_score}% < {active_threshold}%",
+                                  {"smc_grade": smc_analysis.setup_grade,
+                                   "confidence": confidence_result.confidence_score})
 
-            # 10.5 Run filter chain (Self-Upgrade System)
-            filter_chain_result = self._run_filter_chain(
-                instrument=instrument,
-                direction=direction,
-                confidence=confidence_result.confidence_score,
-                technical=technical,
-                sentiment=sentiment
+            # ==========================================
+            # STEP 10: Filter chain (self-upgrade system)
+            # ==========================================
+
+            filter_result = self._run_filter_chain(
+                instrument, direction,
+                confidence_result.confidence_score,
+                technical, sentiment
             )
-            if not filter_chain_result.passed:
-                skip_reason = f"Filter: {filter_chain_result.reason}"
-                db.log_activity({
-                    "activity_type": "SIGNAL_REJECTED",
-                    "instrument": instrument,
-                    "direction": direction,
-                    "confidence": confidence_result.confidence_score,
-                    "decision": "FILTER_BLOCKED",
-                    "reasoning": skip_reason,
-                    "details": {
-                        "blocking_filter": filter_chain_result.blocking_filter,
-                        "filters_run": filter_chain_result.filters_run,
-                        "total_filters": filter_chain_result.total_filters
-                    }
-                })
-                return ScanResult(
-                    instrument=instrument,
-                    has_signal=False,
-                    skip_reason=skip_reason,
-                    scan_duration_ms=self._get_duration_ms(start_time)
-                )
+            if not filter_result.passed:
+                return self._skip(instrument, start_time,
+                                  f"Filter: {filter_result.reason}",
+                                  {"blocking_filter": filter_result.blocking_filter})
 
-            # 11. Check scalping criteria if in scalping mode
-            if self.config.mode == "scalping":
-                scalping_ok, scalping_reason = self._check_scalping_criteria(
-                    technical, price, instrument
-                )
-                if not scalping_ok:
-                    skip_reason = f"Scalping criteria: {scalping_reason}"
+            # ==========================================
+            # STEP 11: SL/TP from SMC analysis
+            # ==========================================
 
-                    # Try AI Override for scalping criteria (ATR)
-                    override_result = self._evaluate_override(
-                        instrument=instrument,
-                        direction=direction,
-                        skip_reason=skip_reason,
-                        confidence=confidence_result.confidence_score,
-                        technical=technical,
-                        sentiment=sentiment,
-                        price=price,
-                        htf_technical=htf_technical
-                    )
-
-                    if override_result and override_result.get("adjustment"):
-                        adj = override_result["adjustment"]
-                        original_values = self._apply_temporary_override(adj.setting_name, adj.new_value)
-                        logger.info(f"AI_OVERRIDE_APPLIED | {instrument} | Relaxed {adj.setting_name} to {adj.new_value}")
-
-                        # Re-check scalping criteria with relaxed settings
-                        scalping_ok, _ = self._check_scalping_criteria(technical, price, instrument)
-
-                        # Restore original settings
-                        self._restore_original_settings(original_values)
-
-                        if scalping_ok:
-                            # Continue processing - override successful
-                            pass
-                        else:
-                            # Override didn't help
-                            db.log_activity({
-                                "activity_type": "SIGNAL_REJECTED",
-                                "instrument": instrument,
-                                "direction": direction,
-                                "confidence": confidence_result.confidence_score,
-                                "decision": "SKIP",
-                                "reasoning": skip_reason,
-                                "details": {
-                                    "scalping_check": scalping_reason,
-                                    "atr_pips": technical.atr_pips,
-                                    "override_attempted": True,
-                                    "override_result": "FAILED"
-                                }
-                            })
-                            return ScanResult(
-                                instrument=instrument,
-                                has_signal=False,
-                                skip_reason=skip_reason,
-                                scan_duration_ms=self._get_duration_ms(start_time)
-                            )
-                    else:
-                        db.log_activity({
-                            "activity_type": "SIGNAL_REJECTED",
-                            "instrument": instrument,
-                            "direction": direction,
-                            "confidence": confidence_result.confidence_score,
-                            "decision": "SKIP",
-                            "reasoning": skip_reason,
-                            "details": {"scalping_check": scalping_reason, "atr_pips": technical.atr_pips}
-                        })
-                        return ScanResult(
-                            instrument=instrument,
-                            has_signal=False,
-                            skip_reason=skip_reason,
-                            scan_duration_ms=self._get_duration_ms(start_time)
-                        )
-
-            # 12. Calculate SL/TP
             entry_price = price["ask"] if direction == "LONG" else price["bid"]
-            sl, tp = self._calculate_sl_tp(entry_price, direction, technical, instrument)
 
-            # 13. Calculate R:R
+            # Use SMC-calculated SL/TP
+            if smc_analysis.stop_loss and smc_analysis.take_profit:
+                sl = smc_analysis.stop_loss
+                tp = smc_analysis.take_profit
+            else:
+                # Fallback to ATR-based
+                sl, tp = self._calculate_sl_tp_fallback(
+                    entry_price, direction, technical, instrument
+                )
+
+            # ==========================================
+            # STEP 12: R:R check (min 1:3)
+            # ==========================================
+
             risk = abs(entry_price - sl)
             reward = abs(tp - entry_price)
             risk_reward = reward / risk if risk > 0 else 0
 
-            # Use small tolerance for float comparison
-            if risk_reward < self.config.scalping.target_rr - 0.01:
-                skip_reason = f"R:R {risk_reward:.2f} < {self.config.scalping.target_rr}"
+            effective_target_rr = profile.get("target_rr", self.config.scalping.target_rr)
+            if risk_reward < effective_target_rr - 0.01:
+                return self._skip(instrument, start_time,
+                                  f"R:R {risk_reward:.2f} < {effective_target_rr}",
+                                  {"risk_reward": risk_reward,
+                                   "smc_grade": smc_analysis.setup_grade})
 
-                # Try AI Override for R:R
-                override_result = self._evaluate_override(
-                    instrument=instrument,
-                    direction=direction,
-                    skip_reason=skip_reason,
-                    confidence=confidence_result.confidence_score,
-                    technical=technical,
-                    sentiment=sentiment,
-                    price=price,
-                    htf_technical=htf_technical
-                )
+            # ==========================================
+            # STEP 13: Create signal
+            # ==========================================
 
-                if override_result and override_result.get("adjustment"):
-                    adj = override_result["adjustment"]
-                    if adj.setting_name == "target_rr":
-                        # Check if current R:R meets the adjusted threshold
-                        adjusted_rr = TunableSettings.get_safe_value("target_rr", adj.new_value)
-                        if risk_reward >= adjusted_rr - 0.01:
-                            logger.info(f"AI_OVERRIDE_APPLIED | {instrument} | R:R {risk_reward:.2f} accepted (threshold lowered to {adjusted_rr:.2f})")
-                            # Continue processing - R:R now acceptable
-                        else:
-                            # Even with override, R:R still too low
-                            db.log_activity({
-                                "activity_type": "SIGNAL_REJECTED",
-                                "instrument": instrument,
-                                "direction": direction,
-                                "confidence": confidence_result.confidence_score,
-                                "decision": "SKIP",
-                                "reasoning": skip_reason,
-                                "details": {
-                                    "risk_reward": risk_reward,
-                                    "target_rr": self.config.scalping.target_rr,
-                                    "override_attempted": True,
-                                    "override_result": "FAILED"
-                                }
-                            })
-                            return ScanResult(
-                                instrument=instrument,
-                                has_signal=False,
-                                skip_reason=skip_reason,
-                                scan_duration_ms=self._get_duration_ms(start_time)
-                            )
-                    else:
-                        # Wrong adjustment type for this rejection
-                        db.log_activity({
-                            "activity_type": "SIGNAL_REJECTED",
-                            "instrument": instrument,
-                            "direction": direction,
-                            "confidence": confidence_result.confidence_score,
-                            "decision": "SKIP",
-                            "reasoning": skip_reason,
-                            "details": {"risk_reward": risk_reward, "target_rr": self.config.scalping.target_rr}
-                        })
-                        return ScanResult(
-                            instrument=instrument,
-                            has_signal=False,
-                            skip_reason=skip_reason,
-                            scan_duration_ms=self._get_duration_ms(start_time)
-                        )
-                else:
-                    db.log_activity({
-                        "activity_type": "SIGNAL_REJECTED",
-                        "instrument": instrument,
-                        "direction": direction,
-                        "confidence": confidence_result.confidence_score,
-                        "decision": "SKIP",
-                        "reasoning": skip_reason,
-                        "details": {"risk_reward": risk_reward, "target_rr": self.config.scalping.target_rr}
-                    })
-                    return ScanResult(
-                        instrument=instrument,
-                        has_signal=False,
-                        skip_reason=skip_reason,
-                        scan_duration_ms=self._get_duration_ms(start_time)
-                    )
-
-            # 14. Create signal
             signal = TradingSignal(
                 instrument=instrument,
                 direction=direction,
@@ -782,47 +523,101 @@ class MarketScanner:
                 technical=technical,
                 sentiment=sentiment,
                 confidence_result=confidence_result,
+                smc_analysis=smc_analysis,
+                raw_confidence=raw_score,
+                sequence_phase=seq_state.current_phase,
+                sequence_phase_name=seq_state.phase_name,
                 scan_duration_ms=self._get_duration_ms(start_time),
-                reason=f"{direction} signal: {technical.trend}, RSI={technical.rsi:.0f}"
+                reason=(
+                    f"SMC {smc_analysis.setup_grade} {direction} "
+                    f"P{seq_state.current_phase}({seq_state.phase_name}): "
+                    f"sweep={'YES' if smc_analysis.sweep_detected else 'NO'}, "
+                    f"choch={'YES' if smc_analysis.ltf_choch else 'NO'}, "
+                    f"bos={'YES' if smc_analysis.ltf_bos else 'NO'}"
+                ),
             )
 
-            # Log with learning info
-            learning_msg = ""
-            if learning_insights.confidence_adjustment != 0:
-                learning_msg = f" [Learning: {learning_insights.confidence_adjustment:+d}%]"
-            logger.info(f"Signal found: {instrument} {direction} conf={confidence_result.confidence_score}%{learning_msg}")
+            # ==========================================
+            # STEP 13.5: Limit entry calculation
+            # ==========================================
 
-            # Log signal generated
+            if (self.config.limit_entry.enabled and
+                    smc_analysis.entry_zone is not None):
+                zone_low, zone_high = smc_analysis.entry_zone
+                # Per-instrument midpoint override (e.g. XAU_USD uses edge, not midpoint)
+                use_midpoint = profile.get("limit_entry_midpoint", self.config.limit_entry.midpoint_entry)
+                if use_midpoint:
+                    limit_price = (zone_low + zone_high) / 2
+                else:
+                    # Edge entry: top of zone for LONG, bottom for SHORT
+                    limit_price = zone_high if direction == "LONG" else zone_low
+
+                signal.entry_zone = smc_analysis.entry_zone
+                signal.limit_price = limit_price
+                signal.use_limit_entry = True
+                signal.entry_price = limit_price  # Update for R:R recalc
+
+                # Recalculate R:R with limit price
+                risk = abs(limit_price - sl)
+                reward = abs(tp - limit_price)
+                new_rr = reward / risk if risk > 0 else 0
+                signal.risk_reward = new_rr
+
+                logger.info(
+                    f"LIMIT ENTRY: {instrument} {direction} "
+                    f"limit={limit_price:.5f} zone=({zone_low:.5f},{zone_high:.5f}) "
+                    f"R:R={new_rr:.2f} (was {risk_reward:.2f})"
+                )
+
+            logger.info(
+                f"SIGNAL: {instrument} {direction} "
+                f"grade={smc_analysis.setup_grade} "
+                f"conf={confidence_result.confidence_score}% "
+                f"R:R={signal.risk_reward:.2f}"
+                f"{' [LIMIT]' if signal.use_limit_entry else ''}"
+            )
+
+            # Log signal
             db.log_activity({
                 "activity_type": "SIGNAL_GENERATED",
                 "instrument": instrument,
                 "direction": direction,
-                "technical_score": confidence_result.technical_score,
-                "sentiment_score": sentiment.sentiment_score,
                 "confidence": confidence_result.confidence_score,
                 "decision": "SIGNAL",
-                "reasoning": f"Valid {direction} signal! Entry: {entry_price:.5f}, SL: {sl:.5f}, TP: {tp:.5f}, R:R: {risk_reward:.2f}{learning_msg}",
+                "reasoning": signal.reason,
                 "details": {
+                    "smc_grade": smc_analysis.setup_grade,
+                    "htf_bias": smc_analysis.htf_bias,
+                    "sweep_type": smc_analysis.sweep_detected.sweep_direction if smc_analysis.sweep_detected else None,
+                    "choch": smc_analysis.ltf_choch.direction if smc_analysis.ltf_choch else None,
+                    "bos": smc_analysis.ltf_bos.direction if smc_analysis.ltf_bos else None,
+                    "displacement": smc_analysis.ltf_displacement is not None,
+                    "fvg_count": len(smc_analysis.fvgs),
+                    "ob_count": len(smc_analysis.order_blocks),
+                    "premium_discount": smc_analysis.premium_discount.get("zone") if smc_analysis.premium_discount else None,
                     "entry_price": entry_price,
                     "stop_loss": sl,
                     "take_profit": tp,
                     "risk_reward": risk_reward,
-                    "trend": technical.trend,
-                    "rsi": technical.rsi,
-                    "atr_pips": technical.atr_pips,
-                    "market_regime": technical.market_regime,
-                    "regime_strength": technical.regime_strength,
-                    "adx": technical.adx,
+                    "grade_reasons": smc_analysis.grade_reasons,
                     "bull_case": confidence_result.bull_case,
                     "bear_case": confidence_result.bear_case,
-                    "learning_adjustment": learning_insights.confidence_adjustment,
-                    "learning_warnings": learning_insights.warnings,
-                    "learning_positive": learning_insights.positive_signals
+                    # ISI data
+                    "raw_confidence": raw_score,
+                    "calibrated_confidence": calibrated_score,
+                    "sequence_phase": seq_state.current_phase,
+                    "sequence_phase_name": seq_state.phase_name,
+                    "seq_modifier": seq_modifier,
+                    "divergence_modifier": divergence_modifier,
+                    "heat_map": smc_analysis.heat_map.to_dict() if smc_analysis.heat_map else None,
+                    "use_limit_entry": signal.use_limit_entry,
+                    "limit_price": signal.limit_price,
+                    "entry_zone": list(signal.entry_zone) if signal.entry_zone else None,
                 },
-                "duration_ms": self._get_duration_ms(start_time)
+                "duration_ms": self._get_duration_ms(start_time),
             })
 
-            # Save signal to auto_signals table for dashboard tracking
+            # Save to auto_signals table
             db.log_auto_signal({
                 "timestamp": signal.timestamp.isoformat(),
                 "instrument": instrument,
@@ -832,16 +627,16 @@ class MarketScanner:
                 "stop_loss": sl,
                 "take_profit": tp,
                 "risk_reward": risk_reward,
-                "executed": 0,  # Will be updated by executor
+                "executed": 0,
                 "skip_reason": None,
-                "trade_id": None
+                "trade_id": None,
             })
 
             return ScanResult(
                 instrument=instrument,
                 has_signal=True,
                 signal=signal,
-                scan_duration_ms=self._get_duration_ms(start_time)
+                scan_duration_ms=self._get_duration_ms(start_time),
             )
 
         except MT5Error as e:
@@ -854,7 +649,7 @@ class MarketScanner:
                 instrument=instrument,
                 has_signal=False,
                 error=f"MT5 error: {e}",
-                scan_duration_ms=self._get_duration_ms(start_time)
+                scan_duration_ms=self._get_duration_ms(start_time),
             )
         except Exception as e:
             logger.exception(f"Scan error for {instrument}")
@@ -867,261 +662,96 @@ class MarketScanner:
                 instrument=instrument,
                 has_signal=False,
                 error=str(e),
-                scan_duration_ms=self._get_duration_ms(start_time)
+                scan_duration_ms=self._get_duration_ms(start_time),
             )
 
-    def _check_spread(self, price: dict, instrument: str) -> bool:
-        """
-        Check if spread is acceptable for trading.
+    # ==========================================
+    # Helper methods
+    # ==========================================
 
-        Uses per-instrument spread limits from instrument_profiles.json
-        with fallback to config default.
-        """
-        # Get instrument-specific spread limit
+    def _skip(
+        self,
+        instrument: str,
+        start_time: datetime,
+        reason: str,
+        details: dict = None
+    ) -> ScanResult:
+        """Create a skip result with logging."""
+        db.log_activity({
+            "activity_type": "SIGNAL_REJECTED",
+            "instrument": instrument,
+            "decision": "SKIP",
+            "reasoning": reason,
+            "details": details or {},
+        })
+        return ScanResult(
+            instrument=instrument,
+            has_signal=False,
+            skip_reason=reason,
+            scan_duration_ms=self._get_duration_ms(start_time),
+        )
+
+    def _check_spread(self, price: dict, instrument: str) -> bool:
+        """Check if spread is acceptable."""
         profile = get_profile(instrument)
         max_spread = profile.get("max_spread_pips", self.config.scalping.max_spread_pips)
-
         return price.get("spread_pips", 999) <= max_spread
 
     def _check_market_regime(
         self,
         technical: TechnicalAnalysis,
         instrument: str
-    ) -> tuple[bool, str]:
-        """
-        Check if market regime is suitable for trading.
-
-        Conservative approach for Phase 1:
-        - LOW_VOLATILITY: Block (no movement = no profit potential)
-        - VOLATILE: Block (too risky for scalping)
-        - TRENDING: Allow only with-trend trades
-        - RANGING: Allow at S/R levels
-
-        Args:
-            technical: Technical analysis with regime data
-            instrument: Instrument symbol
-
-        Returns:
-            (is_ok, reason)
-        """
+    ) -> tuple:
+        """Check if market regime is suitable."""
         regime = technical.market_regime
         strength = technical.regime_strength
 
-        # Block LOW_VOLATILITY - no scalping opportunity
+        profile = get_profile(instrument)
+        if profile.get("skip_regime_filter", False):
+            return True, "OK (regime filter skipped)"
+
         if regime == "LOW_VOLATILITY" and strength >= 60:
-            return False, f"Low volatility squeeze (ADX={technical.adx:.1f}, BB width={technical.bollinger_width:.2f}%)"
+            return False, f"Low volatility (ADX={technical.adx:.1f})"
 
-        # Block VOLATILE - too risky for scalping
         if regime == "VOLATILE" and strength >= 65:
-            return False, f"High volatility ({technical.bollinger_width_percentile:.0f}th percentile, ADX={technical.adx:.1f})"
-
-        # RANGING - check if near S/R for bounce plays
-        if regime == "RANGING":
-            near_sr = self._is_near_support_resistance(technical)
-            if not near_sr and strength >= 70:
-                return False, f"Ranging market but not at S/R (ADX={technical.adx:.1f})"
-
-        # TRENDING - we'll check direction alignment later in MTF check
-        # For now just log that we're in a trending regime
-        if regime == "TRENDING":
-            logger.debug(f"{instrument}: Trending regime (ADX={technical.adx:.1f}, strength={strength}%)")
+            return False, f"High volatility ({technical.bollinger_width_percentile:.0f}th pct)"
 
         return True, "OK"
 
-    def _is_near_support_resistance(self, technical: TechnicalAnalysis) -> bool:
-        """
-        Check if price is near a support or resistance level.
-
-        For ranging markets, we want to trade bounces at S/R levels.
-
-        Returns:
-            True if within 15 pips of S/R
-        """
-        NEAR_SR_THRESHOLD_PIPS = 15
-
-        near_support = (
-            technical.distance_to_support_pips is not None and
-            technical.distance_to_support_pips <= NEAR_SR_THRESHOLD_PIPS
-        )
-
-        near_resistance = (
-            technical.distance_to_resistance_pips is not None and
-            technical.distance_to_resistance_pips <= NEAR_SR_THRESHOLD_PIPS
-        )
-
-        return near_support or near_resistance
-
-    def _determine_direction(
-        self,
-        technical: TechnicalAnalysis,
-        sentiment: SentimentResult
-    ) -> Optional[str]:
-        """
-        Determine trade direction based on analysis.
-
-        Returns:
-            "LONG", "SHORT", or None if no clear direction
-        """
-        # Count bullish/bearish signals
-        bullish = 0
-        bearish = 0
-
-        # Trend
-        if technical.trend == "BULLISH":
-            bullish += 2
-        elif technical.trend == "BEARISH":
-            bearish += 2
-
-        # RSI
-        if technical.rsi < 30:
-            bullish += 1  # Oversold = potential long
-        elif technical.rsi > 70:
-            bearish += 1  # Overbought = potential short
-
-        # MACD
-        if technical.macd_trend == "BULLISH":
-            bullish += 1
-        elif technical.macd_trend == "BEARISH":
-            bearish += 1
-
-        # Sentiment
-        if sentiment.sentiment_score > 0.3:
-            bullish += 1
-        elif sentiment.sentiment_score < -0.3:
-            bearish += 1
-
-        # Need clear direction
-        if bullish >= 3 and bullish > bearish:
-            return "LONG"
-        elif bearish >= 3 and bearish > bullish:
-            return "SHORT"
-
-        return None
-
-    def _is_in_killzone(self) -> tuple[bool, str]:
-        """
-        Check if current time is in a high-probability killzone.
-
-        Killzones are periods of high liquidity and volatility:
-        - London Open: 07:00-09:00 UTC
-        - NY Open: 12:00-14:00 UTC (overlap with London)
-        - London Close: 15:00-17:00 UTC
-
-        Returns:
-            (is_in_killzone, killzone_name)
-        """
-        now = datetime.now(timezone.utc)
-        hour = now.hour
-
-        # London Open Killzone
+    def _is_in_killzone(self) -> tuple:
+        """Check if current time is in a high-probability killzone."""
+        hour = datetime.now(timezone.utc).hour
         if 7 <= hour < 9:
             return True, "LONDON_OPEN"
-
-        # NY Open Killzone (London/NY overlap)
         if 12 <= hour < 14:
             return True, "NY_OPEN"
-
-        # London Close Killzone
         if 15 <= hour < 17:
             return True, "LONDON_CLOSE"
-
         return False, ""
 
-    def _confirm_mtf_trend(
-        self,
-        ltf: TechnicalAnalysis,
-        htf: TechnicalAnalysis
-    ) -> tuple[bool, str]:
-        """
-        Confirm multi-timeframe trend alignment.
-
-        For scalping, we want the lower timeframe (M5) direction
-        to align with the higher timeframe (H1) trend.
-
-        Rules:
-        - LONG only if H1 is BULLISH or RANGING
-        - SHORT only if H1 is BEARISH or RANGING
-        - If H1 strongly opposes LTF direction, skip
-
-        Args:
-            ltf: Lower timeframe (M5) analysis
-            htf: Higher timeframe (H1) analysis
-
-        Returns:
-            (is_aligned, reason)
-        """
-        # Determine LTF direction
-        ltf_direction = None
-        if ltf.trend == "BULLISH" or (ltf.macd_trend == "BULLISH" and ltf.rsi < 70):
-            ltf_direction = "LONG"
-        elif ltf.trend == "BEARISH" or (ltf.macd_trend == "BEARISH" and ltf.rsi > 30):
-            ltf_direction = "SHORT"
-
-        if ltf_direction is None:
-            return True, "OK"  # No clear direction, continue analysis
-
-        # Check HTF alignment - CONSERVATIVE MODE: require trend alignment
-        if ltf_direction == "LONG":
-            # For LONG, HTF should be BULLISH or RANGING
-            if htf.trend == "BEARISH" and htf.trend_strength > 55:
-                return False, f"M5=BULLISH but H1=BEARISH({htf.trend_strength:.0f}%)"
-            # Also check MACD alignment
-            if htf.macd_trend == "BEARISH" and htf.trend == "BEARISH":
-                return False, f"M5=BULLISH but H1 MACD+Trend=BEARISH"
-
-        elif ltf_direction == "SHORT":
-            # For SHORT, HTF should be BEARISH or RANGING
-            if htf.trend == "BULLISH" and htf.trend_strength > 55:
-                return False, f"M5=BEARISH but H1=BULLISH({htf.trend_strength:.0f}%)"
-            if htf.macd_trend == "BULLISH" and htf.trend == "BULLISH":
-                return False, f"M5=BEARISH but H1 MACD+Trend=BULLISH"
-
-        return True, "OK"
-
-    def _check_scalping_criteria(
-        self,
-        technical: TechnicalAnalysis,
-        price: dict,
-        instrument: str
-    ) -> tuple[bool, str]:
-        """
-        Check scalping-specific criteria.
-
-        Returns:
-            (is_ok, reason)
-        """
-        scalping = self.config.scalping
-
-        # Check ATR (volatility)
-        if technical.atr_pips < scalping.min_atr_pips:
-            return False, f"ATR too low: {technical.atr_pips:.1f} < {scalping.min_atr_pips}"
-
-        # Check session (simplified - full implementation would check actual time)
-        # TODO: Add proper session filtering
-
-        return True, "OK"
-
-    def _calculate_sl_tp(
+    def _calculate_sl_tp_fallback(
         self,
         entry: float,
         direction: str,
         technical: TechnicalAnalysis,
         instrument: str
-    ) -> tuple[float, float]:
-        """
-        Calculate stop loss and take profit for scalping.
+    ) -> tuple:
+        """Fallback SL/TP using ATR when SMC zones unavailable."""
+        profile = get_profile(instrument)
+        max_sl = profile.get("max_sl_pips", self.config.scalping.max_sl_pips)
+        target_rr = profile.get("target_rr", self.config.scalping.target_rr)
 
-        Returns:
-            (stop_loss, take_profit)
-        """
-        scalping = self.config.scalping
+        if "XAU" in instrument:
+            pip_value = 0.1
+        elif "BTC" in instrument or "ETH" in instrument:
+            pip_value = 1.0
+        elif "JPY" in instrument:
+            pip_value = 0.01
+        else:
+            pip_value = 0.0001
 
-        # Get pip value
-        pip_value = 0.0001 if "JPY" not in instrument else 0.01
-
-        # Use ATR-based SL, capped at max
-        sl_pips = min(technical.atr_pips * 1.5, scalping.max_sl_pips)
-        tp_pips = sl_pips * scalping.target_rr
+        sl_pips = min(technical.atr_pips * 1.5, max_sl)
+        tp_pips = sl_pips * target_rr
 
         if direction == "LONG":
             sl = entry - (sl_pips * pip_value)
@@ -1132,147 +762,47 @@ class MarketScanner:
 
         return sl, tp
 
-    def _get_duration_ms(self, start_time: datetime) -> int:
-        """Calculate duration in milliseconds."""
-        return int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+    def _build_smc_bull_case(self, smc: SMCAnalysis) -> str:
+        """Build bull case from SMC analysis."""
+        points = []
+        if smc.htf_bias == "BULLISH":
+            points.append(f"HTF bullish ({smc.htf_structure})")
+        if smc.sweep_detected:
+            s = smc.sweep_detected
+            points.append(f"{s.sweep_direction} at {s.level.price:.5f}")
+        if smc.ltf_choch and smc.ltf_choch.direction == "BULLISH":
+            points.append(f"Bullish CHoCH at {smc.ltf_choch.break_level:.5f}")
+        if smc.ltf_bos and smc.ltf_bos.direction == "BULLISH":
+            points.append(f"Bullish BOS at {smc.ltf_bos.break_level:.5f}")
+        if smc.ltf_displacement and smc.ltf_displacement.direction == "BULLISH":
+            points.append(f"Bullish displacement ({smc.ltf_displacement.avg_body_ratio:.1f}x)")
+        unfilled_fvgs = [f for f in smc.fvgs if not f.filled and f.direction == "BULLISH"]
+        if unfilled_fvgs:
+            points.append(f"{len(unfilled_fvgs)} unfilled bullish FVG(s)")
+        pd = smc.premium_discount
+        if pd and pd.get("zone") == "DISCOUNT":
+            points.append(f"Price in discount zone ({pd.get('percentage', 0):.0f}%)")
+        return "; ".join(points) if points else "No strong bullish factors"
 
-    def _evaluate_override(
-        self,
-        instrument: str,
-        direction: str,
-        skip_reason: str,
-        confidence: int,
-        technical: TechnicalAnalysis,
-        sentiment: SentimentResult,
-        price: dict,
-        htf_technical: Optional[TechnicalAnalysis] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Evaluate if a rejected signal should be overridden by AI.
-
-        Args:
-            instrument: Instrument symbol
-            direction: Trade direction
-            skip_reason: Reason for rejection
-            confidence: Confidence score
-            technical: Technical analysis
-            sentiment: Sentiment analysis
-            price: Current price data
-            htf_technical: Higher timeframe technical data (optional)
-
-        Returns:
-            Dict with override result and adjusted settings, or None
-        """
-        if not self.override_evaluator.can_override(skip_reason):
-            return None
-
-        # Build context for AI
-        context = OverrideContext(
-            instrument=instrument,
-            direction=direction,
-            skip_reason=skip_reason,
-            confidence=confidence,
-            technical_data={
-                "trend": technical.trend,
-                "trend_strength": getattr(technical, "trend_strength", 0),
-                "rsi": technical.rsi,
-                "macd_trend": technical.macd_trend,
-                "atr_pips": technical.atr_pips,
-            },
-            sentiment_score=sentiment.sentiment_score,
-            spread_pips=price.get("spread_pips", 0),
-            atr_pips=technical.atr_pips,
-        )
-
-        # Build signal data for AI
-        signal_data = {
-            "price": price.get("mid", price.get("bid", 0)),
-            "rsi": technical.rsi,
-            "macd_trend": technical.macd_trend,
-            "m5_trend": technical.trend,
-            "h1_trend": htf_technical.trend if htf_technical else "N/A",
-            "h1_strength": getattr(htf_technical, "trend_strength", 0) if htf_technical else 0,
-            "tech_score": getattr(technical, "trend_strength", 50),
-            "sentiment_score": sentiment.sentiment_score,
-            "adv_score": 50,  # Default if not available
-        }
-
-        logger.info(f"AI_OVERRIDE_EVAL | {instrument} | Evaluating override for: {skip_reason}")
-
-        result = self.override_evaluator.evaluate_override(context, signal_data, skip_reason)
-
-        if result is None:
-            return None
-
-        if result.override_recommended:
-            logger.info(
-                f"AI_OVERRIDE_APPROVED | {instrument} | confidence={result.ai_confidence}% "
-                f"| {result.reasoning[:80]}"
-            )
-            if result.suggested_adjustment:
-                logger.info(
-                    f"AI_OVERRIDE_ADJUSTMENT | {instrument} | "
-                    f"{result.suggested_adjustment.setting_name}: "
-                    f"{result.suggested_adjustment.original_value} -> {result.suggested_adjustment.new_value}"
-                )
-
-            return {
-                "override_result": result,
-                "adjustment": result.suggested_adjustment,
-            }
-        else:
-            logger.info(
-                f"AI_OVERRIDE_REJECTED | {instrument} | confidence={result.ai_confidence}% "
-                f"| {result.reasoning[:80]}"
-            )
-            return None
-
-    def _apply_temporary_override(
-        self,
-        adjustment_setting: str,
-        adjustment_value: Any
-    ) -> Dict[str, Any]:
-        """
-        Apply a temporary override to settings.
-
-        Returns the original values so they can be restored.
-        """
-        original_values = {}
-
-        if adjustment_setting == "max_spread_pips":
-            original_values["max_spread_pips"] = self.config.scalping.max_spread_pips
-            self.config.scalping.max_spread_pips = float(adjustment_value)
-
-        elif adjustment_setting == "min_atr_pips":
-            original_values["min_atr_pips"] = self.config.scalping.min_atr_pips
-            self.config.scalping.min_atr_pips = float(adjustment_value)
-
-        elif adjustment_setting == "target_rr":
-            original_values["target_rr"] = self.config.scalping.target_rr
-            self.config.scalping.target_rr = float(adjustment_value)
-
-        elif adjustment_setting == "min_confidence_threshold":
-            original_values["min_confidence_threshold"] = self.config.min_confidence_threshold
-            self.config.min_confidence_threshold = int(adjustment_value)
-
-        elif adjustment_setting == "mtf_strength_threshold":
-            # This is used in _confirm_mtf_trend - store for reference
-            original_values["mtf_strength_threshold"] = 60  # Default
-            # Note: actual MTF threshold is hardcoded in _confirm_mtf_trend
-
-        return original_values
-
-    def _restore_original_settings(self, original_values: Dict[str, Any]):
-        """Restore settings to original values after override attempt."""
-        for setting, value in original_values.items():
-            if setting == "max_spread_pips":
-                self.config.scalping.max_spread_pips = value
-            elif setting == "min_atr_pips":
-                self.config.scalping.min_atr_pips = value
-            elif setting == "target_rr":
-                self.config.scalping.target_rr = value
-            elif setting == "min_confidence_threshold":
-                self.config.min_confidence_threshold = value
+    def _build_smc_bear_case(self, smc: SMCAnalysis) -> str:
+        """Build bear case from SMC analysis."""
+        points = []
+        if smc.htf_bias == "BEARISH":
+            points.append(f"HTF bearish ({smc.htf_structure})")
+        if smc.htf_bias == "NEUTRAL":
+            points.append("HTF neutral (no clear bias)")
+        if not smc.ltf_displacement:
+            points.append("No displacement confirmation")
+        pd = smc.premium_discount
+        if pd and pd.get("zone") == "EQUILIBRIUM":
+            points.append(f"Price in equilibrium ({pd.get('percentage', 0):.0f}%)")
+        unfilled_fvgs = [f for f in smc.fvgs if not f.filled]
+        if not unfilled_fvgs:
+            points.append("No unfilled FVGs")
+        fresh_obs = [ob for ob in smc.order_blocks if not ob.mitigated]
+        if not fresh_obs:
+            points.append("No fresh order blocks")
+        return "; ".join(points) if points else "No significant bearish factors"
 
     def _run_filter_chain(
         self,
@@ -1282,20 +812,7 @@ class MarketScanner:
         technical: TechnicalAnalysis,
         sentiment: SentimentResult
     ):
-        """
-        Run the filter chain from the Self-Upgrade System.
-
-        Args:
-            instrument: Instrument symbol
-            direction: Trade direction
-            confidence: Confidence score
-            technical: Technical analysis
-            sentiment: Sentiment analysis
-
-        Returns:
-            FilterChainResult from the registry
-        """
-        # Build signal data for filters
+        """Run the filter chain from the Self-Upgrade System."""
         signal_data = {
             "instrument": instrument,
             "direction": direction,
@@ -1316,7 +833,6 @@ class MarketScanner:
             "timestamp": datetime.now(timezone.utc),
         }
 
-        # Determine session
         hour = datetime.now(timezone.utc).hour
         if 7 <= hour < 16:
             signal_data["session"] = "london"
@@ -1327,19 +843,21 @@ class MarketScanner:
         else:
             signal_data["session"] = "sydney"
 
-        # Run all filters
         return self.filter_registry.run_all_filters(signal_data)
+
+    def _get_duration_ms(self, start_time: datetime) -> int:
+        return int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
 
     def get_scan_summary(self) -> dict:
         """Get summary of scanner configuration."""
         return {
             "instruments": self.config.instruments,
-            "mode": self.config.mode,
+            "mode": "SMC",
             "min_confidence": self.config.min_confidence_threshold,
             "scan_interval": self.config.scan_interval_seconds,
             "scalping_config": {
                 "max_sl_pips": self.config.scalping.max_sl_pips,
                 "target_rr": self.config.scalping.target_rr,
-                "max_spread_pips": self.config.scalping.max_spread_pips
+                "max_spread_pips": self.config.scalping.max_spread_pips,
             }
         }

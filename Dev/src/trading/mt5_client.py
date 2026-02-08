@@ -51,8 +51,12 @@ class MT5Client:
         "EUR_GBP": "EURGBP.pro",
         "EUR_JPY": "EURJPY.pro",
         "GBP_JPY": "GBPJPY.pro",
+        # Gold
+        "XAU_USD": "XAUUSD.pro",
+        "XAUUSD": "XAUUSD.pro",
         # Crypto (no .pro suffix)
         "BTC_USD": "BTCUSD",
+        "BTCUSD": "BTCUSD",
     }
 
     # Reverse mapping: MT5 -> OANDA format

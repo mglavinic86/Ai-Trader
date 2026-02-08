@@ -63,6 +63,8 @@ class DataLoader:
         "EUR_GBP": "EURGBP.pro",
         "EUR_JPY": "EURJPY.pro",
         "GBP_JPY": "GBPJPY.pro",
+        # Commodities
+        "XAU_USD": "GOLD.pro",
         # Crypto (no .pro suffix)
         "BTC_USD": "BTCUSD",
     }

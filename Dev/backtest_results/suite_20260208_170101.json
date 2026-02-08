@@ -1,0 +1,1073 @@
+{
+  "run_date": "2026-02-08T17:01:01.224783",
+  "period": "2025-08-01T00:00:00 to 2026-02-07T00:00:00",
+  "initial_capital": 50000,
+  "total_configs": 16,
+  "total_time_seconds": 430.2343201637268,
+  "isi_options": [
+    "noISI",
+    "Seq+XA+Cal"
+  ],
+  "results": [
+    {
+      "label": "EUR Old R2.0 PT",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.0,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 43,
+      "signals_generated": 43,
+      "signals_skipped": 2424,
+      "winners": 13,
+      "losers": 30,
+      "win_rate": 30.23255813953488,
+      "return_pct": -4.548686625118703,
+      "return_abs": -2274.343312559351,
+      "max_dd_pct": 4.548686625118703,
+      "sharpe": -7.347785955644418,
+      "profit_factor": 0.5498518859095408,
+      "expectancy": -52.89170494324069,
+      "avg_win": 213.69922826457594,
+      "avg_loss": 168.41444266662788,
+      "largest_win": 232.5525500000049,
+      "largest_loss": -188.15735999987697,
+      "max_consec_wins": 4,
+      "max_consec_losses": 6,
+      "longs": 19,
+      "shorts": 24,
+      "grades": {
+        "A": 14,
+        "A+": 29
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1506
+        ],
+        [
+          "HTF_NEUTRAL",
+          321
+        ],
+        [
+          "NO_DIRECTION",
+          317
+        ],
+        [
+          "NO_SWEEP",
+          139
+        ],
+        [
+          "RR_0.1_BELOW_2.0",
+          26
+        ]
+      ],
+      "run_time": 100.53264951705933,
+      "final_equity": 47725.65668744065,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -9.097373250237405
+    },
+    {
+      "label": "EUR R2.0",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.0,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 43,
+      "signals_generated": 43,
+      "signals_skipped": 2416,
+      "winners": 10,
+      "losers": 33,
+      "win_rate": 23.25581395348837,
+      "return_pct": -5.876866879996858,
+      "return_abs": -2938.433439998429,
+      "max_dd_pct": 5.876866879996858,
+      "sharpe": -7.545069086234185,
+      "profit_factor": 0.4672796106044102,
+      "expectancy": -68.33566139531217,
+      "avg_win": 257.74685200003114,
+      "avg_loss": 167.1485442423859,
+      "largest_win": 354.6696200000308,
+      "largest_loss": -185.7103199999529,
+      "max_consec_wins": 2,
+      "max_consec_losses": 7,
+      "longs": 19,
+      "shorts": 24,
+      "grades": {
+        "A": 14,
+        "A+": 29
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1504
+        ],
+        [
+          "HTF_NEUTRAL",
+          318
+        ],
+        [
+          "NO_DIRECTION",
+          314
+        ],
+        [
+          "NO_SWEEP",
+          139
+        ],
+        [
+          "RR_0.1_BELOW_2.0",
+          26
+        ]
+      ],
+      "run_time": 100.43485927581787,
+      "final_equity": 47061.56656000157,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -11.753733759993716
+    },
+    {
+      "label": "EUR R2.5",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 8,
+      "signals_generated": 8,
+      "signals_skipped": 2578,
+      "winners": 1,
+      "losers": 7,
+      "win_rate": 12.5,
+      "return_pct": -1.694349599999434,
+      "return_abs": -847.1747999997169,
+      "max_dd_pct": 2.2149881962613143,
+      "sharpe": -11.352432463725048,
+      "profit_factor": 0.2968966808569939,
+      "expectancy": -105.89684999996493,
+      "avg_win": 357.73318000003104,
+      "avg_loss": 172.12971142853576,
+      "largest_win": 357.73318000003104,
+      "largest_loss": -188.28215999995223,
+      "max_consec_wins": 1,
+      "max_consec_losses": 4,
+      "longs": 4,
+      "shorts": 4,
+      "grades": {
+        "A": 5,
+        "A+": 3
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1581
+        ],
+        [
+          "NO_DIRECTION",
+          342
+        ],
+        [
+          "HTF_NEUTRAL",
+          328
+        ],
+        [
+          "NO_SWEEP",
+          142
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          52
+        ]
+      ],
+      "run_time": 105.00212502479553,
+      "final_equity": 49152.82520000028,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -3.9093377962607483
+    },
+    {
+      "label": "EUR R2.5 AllDay",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": true,
+      "check_session": false,
+      "session_hours": null,
+      "isi_enabled": false,
+      "trades": 22,
+      "signals_generated": 22,
+      "signals_skipped": 6053,
+      "winners": 4,
+      "losers": 18,
+      "win_rate": 18.181818181818183,
+      "return_pct": -2.3703224799982854,
+      "return_abs": -1185.1612399991427,
+      "max_dd_pct": 4.523361458234379,
+      "sharpe": -7.601496769793534,
+      "profit_factor": 0.5952210076267566,
+      "expectancy": -53.870965454507115,
+      "avg_win": 435.69014250003386,
+      "avg_loss": 162.66232277773844,
+      "largest_win": 742.5000000000366,
+      "largest_loss": -189.62174999994738,
+      "max_consec_wins": 1,
+      "max_consec_losses": 7,
+      "longs": 5,
+      "shorts": 17,
+      "grades": {
+        "A+": 11,
+        "A": 11
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          3601
+        ],
+        [
+          "HTF_NEUTRAL",
+          786
+        ],
+        [
+          "NO_DIRECTION",
+          757
+        ],
+        [
+          "NO_SWEEP",
+          537
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          104
+        ]
+      ],
+      "run_time": 266.1341965198517,
+      "final_equity": 48814.83876000086,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -6.893683938232664
+    },
+    {
+      "label": "EUR R2.5 ISI",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": true,
+      "trades": 8,
+      "signals_generated": 8,
+      "signals_skipped": 2578,
+      "winners": 1,
+      "losers": 7,
+      "win_rate": 12.5,
+      "return_pct": -1.694349599999434,
+      "return_abs": -847.1747999997169,
+      "max_dd_pct": 2.2149881962613143,
+      "sharpe": -11.352432463725048,
+      "profit_factor": 0.2968966808569939,
+      "expectancy": -105.89684999996493,
+      "avg_win": 357.73318000003104,
+      "avg_loss": 172.12971142853576,
+      "largest_win": 357.73318000003104,
+      "largest_loss": -188.28215999995223,
+      "max_consec_wins": 1,
+      "max_consec_losses": 4,
+      "longs": 4,
+      "shorts": 4,
+      "grades": {
+        "A": 5,
+        "A+": 3
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1581
+        ],
+        [
+          "NO_DIRECTION",
+          342
+        ],
+        [
+          "HTF_NEUTRAL",
+          328
+        ],
+        [
+          "NO_SWEEP",
+          142
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          51
+        ]
+      ],
+      "run_time": 138.4992744922638,
+      "final_equity": 49152.82520000028,
+      "isi_phases": {
+        "DISPLACEMENT": 4,
+        "MANIPULATION": 1,
+        "RETRACEMENT": 3
+      },
+      "avg_seq_modifier": 6.875,
+      "avg_div_modifier": 10.625,
+      "composite": -3.9093377962607483
+    },
+    {
+      "label": "EUR R2.5 NoFilt",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": false,
+      "check_session": false,
+      "session_hours": null,
+      "isi_enabled": false,
+      "trades": 22,
+      "signals_generated": 22,
+      "signals_skipped": 6053,
+      "winners": 4,
+      "losers": 18,
+      "win_rate": 18.181818181818183,
+      "return_pct": -2.3703224799982854,
+      "return_abs": -1185.1612399991427,
+      "max_dd_pct": 4.523361458234379,
+      "sharpe": -7.601496769793534,
+      "profit_factor": 0.5952210076267566,
+      "expectancy": -53.870965454507115,
+      "avg_win": 435.69014250003386,
+      "avg_loss": 162.66232277773844,
+      "largest_win": 742.5000000000366,
+      "largest_loss": -189.62174999994738,
+      "max_consec_wins": 1,
+      "max_consec_losses": 7,
+      "longs": 5,
+      "shorts": 17,
+      "grades": {
+        "A+": 11,
+        "A": 11
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          3601
+        ],
+        [
+          "HTF_NEUTRAL",
+          786
+        ],
+        [
+          "NO_DIRECTION",
+          757
+        ],
+        [
+          "NO_SWEEP",
+          537
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          104
+        ]
+      ],
+      "run_time": 41.12573051452637,
+      "final_equity": 48814.83876000086,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -6.893683938232664
+    },
+    {
+      "label": "EUR R2.5 NoRegime",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": false,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 8,
+      "signals_generated": 8,
+      "signals_skipped": 2578,
+      "winners": 1,
+      "losers": 7,
+      "win_rate": 12.5,
+      "return_pct": -1.694349599999434,
+      "return_abs": -847.1747999997169,
+      "max_dd_pct": 2.2149881962613143,
+      "sharpe": -11.352432463725048,
+      "profit_factor": 0.2968966808569939,
+      "expectancy": -105.89684999996493,
+      "avg_win": 357.73318000003104,
+      "avg_loss": 172.12971142853576,
+      "largest_win": 357.73318000003104,
+      "largest_loss": -188.28215999995223,
+      "max_consec_wins": 1,
+      "max_consec_losses": 4,
+      "longs": 4,
+      "shorts": 4,
+      "grades": {
+        "A": 5,
+        "A+": 3
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1581
+        ],
+        [
+          "NO_DIRECTION",
+          342
+        ],
+        [
+          "HTF_NEUTRAL",
+          328
+        ],
+        [
+          "NO_SWEEP",
+          142
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          52
+        ]
+      ],
+      "run_time": 14.08147931098938,
+      "final_equity": 49152.82520000028,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -3.9093377962607483
+    },
+    {
+      "label": "EUR R3.0",
+      "instrument": "EUR_USD",
+      "min_confidence": 70,
+      "target_rr": 3.0,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 6,
+      "signals_generated": 6,
+      "signals_skipped": 2589,
+      "winners": 0,
+      "losers": 6,
+      "win_rate": 0.0,
+      "return_pct": -2.123705019999499,
+      "return_abs": -1061.8525099997496,
+      "max_dd_pct": 2.6420696981065563,
+      "sharpe": -12.165308372660977,
+      "profit_factor": 0.0,
+      "expectancy": -176.97541833329228,
+      "avg_win": 0,
+      "avg_loss": 176.97541833329228,
+      "largest_win": -164.94169999996848,
+      "largest_loss": -213.993289999941,
+      "max_consec_wins": 0,
+      "max_consec_losses": 6,
+      "longs": 2,
+      "shorts": 4,
+      "grades": {
+        "A": 4,
+        "A+": 2
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1586
+        ],
+        [
+          "NO_DIRECTION",
+          343
+        ],
+        [
+          "HTF_NEUTRAL",
+          328
+        ],
+        [
+          "NO_SWEEP",
+          142
+        ],
+        [
+          "RR_2.0_BELOW_3.0",
+          52
+        ]
+      ],
+      "run_time": 106.61082649230957,
+      "final_equity": 48938.14749000025,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -4.765774718106055
+    },
+    {
+      "label": "GBP Old R2.0 PT",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.0,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 30,
+      "signals_generated": 30,
+      "signals_skipped": 2502,
+      "winners": 10,
+      "losers": 20,
+      "win_rate": 33.33333333333333,
+      "return_pct": -2.2251937823827608,
+      "return_abs": -1112.5968911913806,
+      "max_dd_pct": 2.787653244264686,
+      "sharpe": -8.064403085481587,
+      "profit_factor": 0.6667055607550815,
+      "expectancy": -37.086563039712786,
+      "avg_win": 222.55832888079618,
+      "avg_loss": 166.90900899996723,
+      "largest_win": 277.8461500000191,
+      "largest_loss": -172.10624999995412,
+      "max_consec_wins": 2,
+      "max_consec_losses": 5,
+      "longs": 11,
+      "shorts": 19,
+      "grades": {
+        "A+": 14,
+        "A": 16
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1420
+        ],
+        [
+          "HTF_NEUTRAL",
+          521
+        ],
+        [
+          "NO_DIRECTION",
+          314
+        ],
+        [
+          "NO_SWEEP",
+          99
+        ],
+        [
+          "RR_0.2_BELOW_2.0",
+          17
+        ]
+      ],
+      "run_time": 113.97094321250916,
+      "final_equity": 48887.40310880862,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -5.012847026647447
+    },
+    {
+      "label": "GBP R2.0",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.0,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 30,
+      "signals_generated": 30,
+      "signals_skipped": 2480,
+      "winners": 6,
+      "losers": 24,
+      "win_rate": 20.0,
+      "return_pct": -4.7412365799980325,
+      "return_abs": -2370.6182899990163,
+      "max_dd_pct": 5.114916539998056,
+      "sharpe": -7.3383803133954935,
+      "profit_factor": 0.4043514447106104,
+      "expectancy": -79.02060966663382,
+      "avg_win": 268.2126683333683,
+      "avg_loss": 165.82892916663434,
+      "largest_win": 340.53534000003964,
+      "largest_loss": -172.10624999995412,
+      "max_consec_wins": 2,
+      "max_consec_losses": 10,
+      "longs": 11,
+      "shorts": 19,
+      "grades": {
+        "A+": 14,
+        "A": 16
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1400
+        ],
+        [
+          "HTF_NEUTRAL",
+          521
+        ],
+        [
+          "NO_DIRECTION",
+          312
+        ],
+        [
+          "NO_SWEEP",
+          99
+        ],
+        [
+          "RR_0.2_BELOW_2.0",
+          17
+        ]
+      ],
+      "run_time": 112.21509265899658,
+      "final_equity": 47629.381710000984,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -9.856153119996089
+    },
+    {
+      "label": "GBP R2.5",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 10,
+      "signals_generated": 10,
+      "signals_skipped": 2563,
+      "winners": 1,
+      "losers": 9,
+      "win_rate": 10.0,
+      "return_pct": -2.3339707799993485,
+      "return_abs": -1166.9853899996742,
+      "max_dd_pct": 2.3816952368257573,
+      "sharpe": -9.362636459549412,
+      "profit_factor": 0.22727550200066562,
+      "expectancy": -116.6985389999679,
+      "avg_win": 343.23642000003997,
+      "avg_loss": 167.8024233333021,
+      "largest_win": 343.23642000003997,
+      "largest_loss": -171.91349999996265,
+      "max_consec_wins": 1,
+      "max_consec_losses": 6,
+      "longs": 4,
+      "shorts": 6,
+      "grades": {
+        "A": 7,
+        "A+": 3
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1448
+        ],
+        [
+          "HTF_NEUTRAL",
+          521
+        ],
+        [
+          "NO_DIRECTION",
+          323
+        ],
+        [
+          "NO_SWEEP",
+          99
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          35
+        ]
+      ],
+      "run_time": 118.9964292049408,
+      "final_equity": 48833.014610000326,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -4.7156660168251054
+    },
+    {
+      "label": "GBP R2.5 AllDay",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": true,
+      "check_session": false,
+      "session_hours": null,
+      "isi_enabled": false,
+      "trades": 21,
+      "signals_generated": 21,
+      "signals_skipped": 6072,
+      "winners": 4,
+      "losers": 17,
+      "win_rate": 19.047619047619047,
+      "return_pct": -2.73130269999853,
+      "return_abs": -1365.6513499992652,
+      "max_dd_pct": 4.649760885839167,
+      "sharpe": -7.172737417667558,
+      "profit_factor": 0.5226398184546323,
+      "expectancy": -65.03101666663107,
+      "avg_win": 373.79729250003413,
+      "avg_loss": 168.2847364705523,
+      "largest_win": 439.8400000000264,
+      "largest_loss": -194.4055699999097,
+      "max_consec_wins": 2,
+      "max_consec_losses": 13,
+      "longs": 10,
+      "shorts": 11,
+      "grades": {
+        "A": 14,
+        "A+": 7
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          3377
+        ],
+        [
+          "HTF_NEUTRAL",
+          1294
+        ],
+        [
+          "NO_DIRECTION",
+          700
+        ],
+        [
+          "NO_SWEEP",
+          351
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          82
+        ]
+      ],
+      "run_time": 231.9900209903717,
+      "final_equity": 48634.348650000735,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -7.381063585837698
+    },
+    {
+      "label": "GBP R2.5 ISI",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": true,
+      "trades": 9,
+      "signals_generated": 9,
+      "signals_skipped": 2569,
+      "winners": 1,
+      "losers": 8,
+      "win_rate": 11.11111111111111,
+      "return_pct": -2.0056298599994045,
+      "return_abs": -1002.8149299997021,
+      "max_dd_pct": 2.0535147604538175,
+      "sharpe": -9.485969756201657,
+      "profit_factor": 0.2556317010753645,
+      "expectancy": -111.4238811110785,
+      "avg_win": 344.3877000000401,
+      "avg_loss": 168.40032874996834,
+      "largest_win": 344.3877000000401,
+      "largest_loss": -171.91349999996265,
+      "max_consec_wins": 1,
+      "max_consec_losses": 5,
+      "longs": 3,
+      "shorts": 6,
+      "grades": {
+        "A": 6,
+        "A+": 3
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1452
+        ],
+        [
+          "HTF_NEUTRAL",
+          521
+        ],
+        [
+          "NO_DIRECTION",
+          324
+        ],
+        [
+          "NO_SWEEP",
+          99
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          34
+        ]
+      ],
+      "run_time": 135.2177290916443,
+      "final_equity": 48997.1850700003,
+      "isi_phases": {
+        "DISPLACEMENT": 3,
+        "RETRACEMENT": 4,
+        "CONTINUATION": 2
+      },
+      "avg_seq_modifier": 8.333333333333334,
+      "avg_div_modifier": 4.111111111111111,
+      "composite": -4.059144620453222
+    },
+    {
+      "label": "GBP R2.5 NoFilt",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": false,
+      "check_session": false,
+      "session_hours": null,
+      "isi_enabled": false,
+      "trades": 21,
+      "signals_generated": 21,
+      "signals_skipped": 6072,
+      "winners": 4,
+      "losers": 17,
+      "win_rate": 19.047619047619047,
+      "return_pct": -2.73130269999853,
+      "return_abs": -1365.6513499992652,
+      "max_dd_pct": 4.649760885839167,
+      "sharpe": -7.172737417667558,
+      "profit_factor": 0.5226398184546323,
+      "expectancy": -65.03101666663107,
+      "avg_win": 373.79729250003413,
+      "avg_loss": 168.2847364705523,
+      "largest_win": 439.8400000000264,
+      "largest_loss": -194.4055699999097,
+      "max_consec_wins": 2,
+      "max_consec_losses": 13,
+      "longs": 10,
+      "shorts": 11,
+      "grades": {
+        "A": 14,
+        "A+": 7
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          3377
+        ],
+        [
+          "HTF_NEUTRAL",
+          1294
+        ],
+        [
+          "NO_DIRECTION",
+          700
+        ],
+        [
+          "NO_SWEEP",
+          351
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          82
+        ]
+      ],
+      "run_time": 45.15019750595093,
+      "final_equity": 48634.348650000735,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -7.381063585837698
+    },
+    {
+      "label": "GBP R2.5 NoRegime",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 2.5,
+      "check_regime": false,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 10,
+      "signals_generated": 10,
+      "signals_skipped": 2563,
+      "winners": 1,
+      "losers": 9,
+      "win_rate": 10.0,
+      "return_pct": -2.3339707799993485,
+      "return_abs": -1166.9853899996742,
+      "max_dd_pct": 2.3816952368257573,
+      "sharpe": -9.362636459549412,
+      "profit_factor": 0.22727550200066562,
+      "expectancy": -116.6985389999679,
+      "avg_win": 343.23642000003997,
+      "avg_loss": 167.8024233333021,
+      "largest_win": 343.23642000003997,
+      "largest_loss": -171.91349999996265,
+      "max_consec_wins": 1,
+      "max_consec_losses": 6,
+      "longs": 4,
+      "shorts": 6,
+      "grades": {
+        "A": 7,
+        "A+": 3
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1448
+        ],
+        [
+          "HTF_NEUTRAL",
+          521
+        ],
+        [
+          "NO_DIRECTION",
+          323
+        ],
+        [
+          "NO_SWEEP",
+          99
+        ],
+        [
+          "RR_2.0_BELOW_2.5",
+          35
+        ]
+      ],
+      "run_time": 23.7412371635437,
+      "final_equity": 48833.014610000326,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -4.7156660168251054
+    },
+    {
+      "label": "GBP R3.0",
+      "instrument": "GBP_USD",
+      "min_confidence": 70,
+      "target_rr": 3.0,
+      "check_regime": true,
+      "check_session": true,
+      "session_hours": [
+        [
+          7,
+          17
+        ]
+      ],
+      "isi_enabled": false,
+      "trades": 7,
+      "signals_generated": 7,
+      "signals_skipped": 2594,
+      "winners": 0,
+      "losers": 7,
+      "win_rate": 0.0,
+      "return_pct": -2.355990179999557,
+      "return_abs": -1177.9950899997784,
+      "max_dd_pct": 2.4037038770570565,
+      "sharpe": -10.971547439966027,
+      "profit_factor": 0.0,
+      "expectancy": -168.28501285711044,
+      "avg_win": 0,
+      "avg_loss": 168.28501285711044,
+      "largest_win": -166.3859199999717,
+      "largest_loss": -171.91349999996265,
+      "max_consec_wins": 0,
+      "max_consec_losses": 7,
+      "longs": 3,
+      "shorts": 4,
+      "grades": {
+        "A": 6,
+        "A+": 1
+      },
+      "top_skips": [
+        [
+          "NO_CHOCH_BOS",
+          1466
+        ],
+        [
+          "HTF_NEUTRAL",
+          526
+        ],
+        [
+          "NO_DIRECTION",
+          325
+        ],
+        [
+          "NO_SWEEP",
+          99
+        ],
+        [
+          "RR_2.0_BELOW_3.0",
+          35
+        ]
+      ],
+      "run_time": 121.82491946220398,
+      "final_equity": 48822.00491000022,
+      "isi_phases": null,
+      "avg_seq_modifier": 0.0,
+      "avg_div_modifier": 0.0,
+      "composite": -4.759694057056613
+    }
+  ]
+}

@@ -360,8 +360,9 @@ Context (JSON):
             logger.warning("LLM not available for signal validation")
             return None
 
-        # Build concise validation prompt
-        prompt = f"""You are an AI trading validator. Analyze this signal and decide: APPROVE or REJECT.
+        # Build concise validation prompt (SMC-based)
+        smc_data = signal_data.get('smc', {})
+        prompt = f"""You are an AI trading validator using Smart Money Concepts (SMC). Analyze this signal and decide: APPROVE or REJECT.
 
 SIGNAL:
 - Instrument: {signal_data.get('instrument')}
@@ -372,24 +373,39 @@ SIGNAL:
 - Take Profit: {signal_data.get('take_profit')}
 - Risk:Reward: {signal_data.get('risk_reward', 0):.2f}
 
-TECHNICAL ANALYSIS:
-- Trend: {signal_data.get('technical', {}).get('trend', 'N/A')}
-- RSI: {signal_data.get('technical', {}).get('rsi', 'N/A')}
-- MACD: {signal_data.get('technical', {}).get('macd_trend', 'N/A')}
-- ATR (pips): {signal_data.get('technical', {}).get('atr_pips', 'N/A')}
+SMC ANALYSIS:
+- HTF Bias: {smc_data.get('htf_bias', 'N/A')}
+- HTF Structure: {smc_data.get('htf_structure', 'N/A')}
+- Setup Grade: {smc_data.get('setup_grade', 'N/A')}
+- Sweep: {smc_data.get('sweep_detected', 'None')}
+- CHoCH: {smc_data.get('ltf_choch', 'None')}
+- BOS: {smc_data.get('ltf_bos', 'None')}
+- Displacement: {smc_data.get('ltf_displacement', 'None')}
+- FVGs: {smc_data.get('fvg_count', 0)}
+- Order Blocks: {smc_data.get('ob_count', 0)}
+- Premium/Discount: {smc_data.get('premium_discount', 'N/A')}
 
 SENTIMENT: {signal_data.get('sentiment', 0):.2f}
+
+SEQUENCE ANALYSIS (ISI):
+- Current Phase: {signal_data.get('sequence_phase_name', 'N/A')} ({signal_data.get('sequence_phase', 'N/A')}/5)
+- Raw Confidence: {signal_data.get('raw_confidence', 'N/A')}%
+- Calibrated Confidence: {signal_data.get('confidence', 'N/A')}%
+- Divergence Modifier: {signal_data.get('divergence_modifier', 0)}
 
 BULL CASE: {signal_data.get('bull_case', 'N/A')[:200]}
 BEAR CASE: {signal_data.get('bear_case', 'N/A')[:200]}
 
-VALIDATION RULES (CONSERVATIVE MODE - quality over quantity):
-1. REJECT if trend is RANGING or unclear
-2. REJECT if RSI is overbought (>70) for LONG or oversold (<30) for SHORT
-3. REJECT if R:R < 1.5
-4. REJECT if confidence < 70%
-5. APPROVE only when technical AND sentiment align with direction
-6. When in doubt, REJECT - we only want high-quality setups
+VALIDATION RULES (SMC+ISI MODE - institutional sequence intelligence):
+1. REJECT if no liquidity sweep detected
+2. REJECT if no CHoCH or BOS on LTF
+3. REJECT if price is in equilibrium zone (not premium/discount)
+4. REJECT if HTF bias is NEUTRAL or opposes LTF direction
+5. REJECT if R:R < 3.0
+6. REJECT if setup grade is B or lower
+7. PREFER Phase 4 (Retracement) entries - OPTIMAL ENTRY POINT
+8. REJECT Phase 1 (Accumulation) - no setup yet
+9. When in doubt, REJECT - we only want A+ and A setups
 
 Respond with ONLY valid JSON:
 {{"decision": "APPROVE" or "REJECT", "reasoning": "1-2 sentence explanation", "confidence_adjustment": -10 to +10}}

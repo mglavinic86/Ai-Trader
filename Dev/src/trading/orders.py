@@ -10,9 +10,9 @@ Usage:
     om.close_all_positions()
 """
 
-from typing import Optional
+from typing import Optional, List, Dict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import MetaTrader5 as mt5
 
@@ -837,3 +837,250 @@ class OrderManager:
                     )
 
         return None  # No modification needed
+
+    def place_pending_order(
+        self,
+        instrument: str,
+        units: int,
+        limit_price: float,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        expiry_minutes: int = 60,
+        confidence: Optional[int] = None,
+        risk_amount: Optional[float] = None,
+    ) -> OrderResult:
+        """
+        Place a pending limit order (buy limit or sell limit).
+
+        Args:
+            instrument: Currency pair (e.g., "EUR_USD")
+            units: Position size (positive = buy limit, negative = sell limit)
+            limit_price: Price at which the order should fill
+            stop_loss: Stop loss price
+            take_profit: Take profit price
+            expiry_minutes: Minutes until order expires (0 = GTC)
+            confidence: AI confidence score
+            risk_amount: Amount at risk
+
+        Returns:
+            OrderResult with order ticket info
+        """
+        if units == 0:
+            return OrderResult(success=False, error="Units cannot be zero")
+
+        # Convert symbol to MT5 format
+        symbol = self.client._convert_symbol(instrument)
+
+        # Get symbol info
+        symbol_info = mt5.symbol_info(symbol)
+        if symbol_info is None:
+            return OrderResult(success=False, error=f"Symbol {symbol} not found")
+
+        # Enable symbol if not visible
+        if not symbol_info.visible:
+            mt5.symbol_select(symbol, True)
+
+        # Convert units to lots
+        contract_size = getattr(symbol_info, "trade_contract_size", 100000.0) or 100000.0
+        lot_size = abs(units) / contract_size
+
+        # Round to broker's volume step
+        volume_step = symbol_info.volume_step
+        if volume_step <= 0:
+            volume_step = 0.01
+        decimal_places = max(0, -int(math.log10(volume_step))) if volume_step > 0 else 2
+        lot_size = math.floor(lot_size / volume_step) * volume_step
+        lot_size = round(lot_size, decimal_places)
+        lot_size = max(symbol_info.volume_min, min(lot_size, symbol_info.volume_max))
+
+        if lot_size < symbol_info.volume_min:
+            return OrderResult(
+                success=False,
+                error=f"Volume too small. Minimum: {symbol_info.volume_min} lots"
+            )
+
+        # Determine order type: BUY_LIMIT (long) or SELL_LIMIT (short)
+        order_type = mt5.ORDER_TYPE_BUY_LIMIT if units > 0 else mt5.ORDER_TYPE_SELL_LIMIT
+
+        # Determine filling mode
+        filling_mode = self._get_filling_mode(symbol_info)
+
+        # Build order request
+        request = {
+            "action": mt5.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": lot_size,
+            "type": order_type,
+            "price": limit_price,
+            "deviation": 20,
+            "magic": 123456,
+            "comment": "AI Trader Limit",
+            "type_filling": filling_mode,
+        }
+
+        # Add SL/TP
+        if stop_loss is not None:
+            request["sl"] = stop_loss
+        if take_profit is not None:
+            request["tp"] = take_profit
+
+        # Set expiry
+        if expiry_minutes > 0:
+            try:
+                expiry_time = datetime.now() + timedelta(minutes=expiry_minutes)
+                # Convert to MT5 timestamp (seconds since epoch)
+                import time
+                expiry_ts = int(time.mktime(expiry_time.timetuple()))
+                request["type_time"] = mt5.ORDER_TIME_SPECIFIED
+                request["expiration"] = expiry_ts
+            except Exception as e:
+                # Fallback to GTC if ORDER_TIME_SPECIFIED not supported
+                logger.warning(f"ORDER_TIME_SPECIFIED failed, using GTC: {e}")
+                request["type_time"] = mt5.ORDER_TIME_GTC
+        else:
+            request["type_time"] = mt5.ORDER_TIME_GTC
+
+        # Execute order
+        try:
+            result = mt5.order_send(request)
+
+            if result is None:
+                error = mt5.last_error()
+                # If ORDER_TIME_SPECIFIED not supported, retry with GTC
+                if "time" in str(error).lower() or "expiration" in str(error).lower():
+                    logger.warning("ORDER_TIME_SPECIFIED not supported, retrying with GTC")
+                    request["type_time"] = mt5.ORDER_TIME_GTC
+                    request.pop("expiration", None)
+                    result = mt5.order_send(request)
+                    if result is None:
+                        error = mt5.last_error()
+                        return OrderResult(success=False, error=f"Pending order failed: {error}")
+                else:
+                    return OrderResult(success=False, error=f"Pending order failed: {error}")
+
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                # Retry without expiration if it was the issue
+                if result.retcode in (10013, 10014, 10015) and "expiration" in request:
+                    logger.warning(f"Retrying without expiration (retcode {result.retcode})")
+                    request["type_time"] = mt5.ORDER_TIME_GTC
+                    request.pop("expiration", None)
+                    result = mt5.order_send(request)
+                    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                        return OrderResult(
+                            success=False,
+                            error=f"Pending order rejected ({result.retcode if result else 'None'})"
+                        )
+                else:
+                    return OrderResult(
+                        success=False,
+                        error=f"Pending order rejected ({result.retcode}): {result.comment}"
+                    )
+
+            direction = "LONG" if units > 0 else "SHORT"
+            logger.info(
+                f"PENDING ORDER placed: {instrument} {direction} "
+                f"limit={limit_price:.5f} lots={lot_size} "
+                f"order=#{result.order}"
+            )
+
+            return OrderResult(
+                success=True,
+                order_id=str(result.order),
+                instrument=instrument,
+                units=units,
+                price=limit_price,
+                raw_response={
+                    "order": result.order,
+                    "retcode": result.retcode,
+                    "type": "PENDING_LIMIT",
+                    "expiry_minutes": expiry_minutes,
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to place pending order: {e}")
+            return OrderResult(success=False, error=str(e))
+
+    def cancel_pending_order(self, order_ticket: int) -> OrderResult:
+        """
+        Cancel a pending order by its ticket number.
+
+        Args:
+            order_ticket: MT5 order ticket
+
+        Returns:
+            OrderResult
+        """
+        request = {
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "order": order_ticket,
+        }
+
+        try:
+            result = mt5.order_send(request)
+
+            if result is None:
+                error = mt5.last_error()
+                return OrderResult(success=False, error=f"Cancel failed: {error}")
+
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                return OrderResult(
+                    success=False,
+                    error=f"Cancel rejected ({result.retcode}): {result.comment}"
+                )
+
+            logger.info(f"Pending order #{order_ticket} cancelled")
+            return OrderResult(
+                success=True,
+                order_id=str(order_ticket),
+                raw_response={"retcode": result.retcode}
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to cancel pending order: {e}")
+            return OrderResult(success=False, error=str(e))
+
+    def get_pending_orders(self, instrument: str = None) -> List[Dict]:
+        """
+        Get all pending orders, optionally filtered by instrument.
+
+        Args:
+            instrument: Filter by instrument (None = all)
+
+        Returns:
+            List of pending order dicts
+        """
+        try:
+            if instrument:
+                symbol = self.client._convert_symbol(instrument)
+                orders = mt5.orders_get(symbol=symbol)
+            else:
+                orders = mt5.orders_get()
+
+            if orders is None:
+                return []
+
+            result = []
+            for order in orders:
+                order_instrument = self.client._convert_symbol_reverse(order.symbol)
+                order_type_str = "BUY_LIMIT" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SELL_LIMIT"
+                direction = "LONG" if order.type == mt5.ORDER_TYPE_BUY_LIMIT else "SHORT"
+
+                result.append({
+                    "order_ticket": order.ticket,
+                    "instrument": order_instrument,
+                    "price": order.price_open,
+                    "type": order_type_str,
+                    "direction": direction,
+                    "volume": order.volume_current,
+                    "sl": order.sl if order.sl > 0 else None,
+                    "tp": order.tp if order.tp > 0 else None,
+                    "time_setup": datetime.fromtimestamp(order.time_setup).isoformat(),
+                    "expiration": datetime.fromtimestamp(order.time_expiration).isoformat() if order.time_expiration > 0 else None,
+                })
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get pending orders: {e}")
+            return []

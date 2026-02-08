@@ -363,6 +363,119 @@ class Database:
                 )
             """)
 
+            # SMC Analysis log - tracks Smart Money Concepts decisions
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS smc_analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    instrument TEXT NOT NULL,
+                    htf_bias TEXT,
+                    htf_structure TEXT,
+                    sweep_detected INTEGER DEFAULT 0,
+                    sweep_details TEXT,
+                    choch_detected INTEGER DEFAULT 0,
+                    bos_detected INTEGER DEFAULT 0,
+                    fvg_count INTEGER DEFAULT 0,
+                    ob_count INTEGER DEFAULT 0,
+                    premium_discount TEXT,
+                    setup_grade TEXT,
+                    direction TEXT,
+                    entry_zone TEXT,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    confidence INTEGER,
+                    executed INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # ===================
+            # ISI (Institutional Sequence Intelligence) Tables
+            # ===================
+
+            # Confidence calibration parameters (Platt Scaling)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calibration_params (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    param_a REAL,
+                    param_b REAL,
+                    training_trades INTEGER,
+                    training_win_rate REAL,
+                    brier_score REAL,
+                    active INTEGER DEFAULT 1
+                )
+            """)
+
+            # Sequence tracker states (institutional cycle per instrument)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sequence_states (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    instrument TEXT,
+                    current_phase INTEGER,
+                    phase_name TEXT,
+                    phase_confidence REAL,
+                    phase_entered_at TEXT,
+                    accumulation_range_high REAL,
+                    accumulation_range_low REAL,
+                    sweep_level REAL,
+                    sweep_direction TEXT,
+                    displacement_magnitude REAL,
+                    expected_target REAL,
+                    active INTEGER DEFAULT 1
+                )
+            """)
+
+            # Sequence phase transitions log
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sequence_transitions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    instrument TEXT,
+                    old_phase INTEGER,
+                    new_phase INTEGER,
+                    old_phase_name TEXT,
+                    new_phase_name TEXT,
+                    reason TEXT,
+                    smc_grade TEXT,
+                    trade_taken INTEGER DEFAULT 0,
+                    trade_id TEXT,
+                    trade_outcome TEXT,
+                    pnl REAL
+                )
+            """)
+
+            # Sequence completions (full cycle tracking)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sequence_completions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    instrument TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    phases_completed INTEGER,
+                    max_phase_reached INTEGER,
+                    total_duration_minutes INTEGER,
+                    was_traded INTEGER DEFAULT 0,
+                    trade_id TEXT,
+                    trade_pnl REAL
+                )
+            """)
+
+            # Cross-asset correlation snapshots
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS correlation_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    pair1 TEXT,
+                    pair2 TEXT,
+                    correlation_30bar REAL,
+                    expected_correlation REAL,
+                    divergence_sigma REAL,
+                    implication TEXT
+                )
+            """)
+
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_instrument ON trades(instrument)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
@@ -389,6 +502,19 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_filters_name ON deployed_filters(filter_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON upgrade_audit_log(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON upgrade_audit_log(action)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_smc_time ON smc_analysis(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_smc_instrument ON smc_analysis(instrument)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_smc_grade ON smc_analysis(setup_grade)")
+
+            # ISI indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_calibration_active ON calibration_params(active)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_states_instrument ON sequence_states(instrument)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_states_active ON sequence_states(active)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_transitions_instrument ON sequence_transitions(instrument)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_transitions_time ON sequence_transitions(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seq_completions_instrument ON sequence_completions(instrument)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_corr_snapshots_time ON correlation_snapshots(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_corr_snapshots_pairs ON correlation_snapshots(pair1, pair2)")
 
     # ===================
     # Trade Operations
