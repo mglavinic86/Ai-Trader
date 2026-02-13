@@ -81,6 +81,7 @@ class MT5Client:
     def __init__(self):
         """Initialize client and connect to MT5."""
         self._connected = False
+        self._symbol_cache = {}
         self._connect()
 
     def _connect(self) -> bool:
@@ -140,17 +141,82 @@ class MT5Client:
         Returns:
             MT5 format (e.g., "EURUSD.pro")
         """
+        instrument_upper = instrument.upper()
+
         # If already in MT5 format, return as-is
-        if ".pro" in instrument:
+        if "." in instrument_upper and "_" not in instrument_upper:
             return instrument
 
-        # Convert from OANDA format
-        if instrument in self.SYMBOL_MAP:
-            return self.SYMBOL_MAP[instrument]
+        # Return cached resolved symbol
+        cached = self._symbol_cache.get(instrument_upper)
+        if cached:
+            return cached
 
-        # Try automatic conversion: EUR_USD -> EURUSD.pro
-        base_symbol = instrument.replace("_", "")
-        return f"{base_symbol}.pro"
+        # Candidate symbols (priority order)
+        candidates = []
+        mapped = self.SYMBOL_MAP.get(instrument_upper)
+        if mapped:
+            candidates.append(mapped)
+
+        base_symbol = instrument_upper.replace("_", "")
+        candidates.extend(
+            [
+                base_symbol,
+                f"{base_symbol}.pro",
+                f"{base_symbol}m",
+                f"{base_symbol}.m",
+                f"{base_symbol}-pro",
+                f"{base_symbol}.r",
+            ]
+        )
+
+        # Special handling for gold symbols across brokers
+        if "XAU" in instrument_upper or "GOLD" in instrument_upper:
+            candidates.extend(
+                [
+                    "XAUUSD",
+                    "XAUUSD.pro",
+                    "XAUUSDm",
+                    "XAUUSD.m",
+                    "GOLD",
+                    "GOLD.pro",
+                    "GOLDm",
+                    "GOLD.m",
+                ]
+            )
+
+        # Try explicit candidates first
+        for symbol in dict.fromkeys(candidates):
+            try:
+                info = mt5.symbol_info(symbol)
+                if info is not None:
+                    if not info.visible:
+                        mt5.symbol_select(symbol, True)
+                    self._symbol_cache[instrument_upper] = symbol
+                    return symbol
+            except Exception:
+                continue
+
+        # As final fallback, scan Market Watch for close matches (XAU/GOLD)
+        if "XAU" in instrument_upper or "GOLD" in instrument_upper:
+            try:
+                symbols = mt5.symbols_get()
+                if symbols:
+                    for s in symbols:
+                        name = getattr(s, "name", "")
+                        upper = name.upper()
+                        if "XAUUSD" in upper or "GOLD" in upper:
+                            mt5.symbol_select(name, True)
+                            self._symbol_cache[instrument_upper] = name
+                            logger.info(f"Resolved {instrument_upper} -> {name}")
+                            return name
+            except Exception:
+                pass
+
+        # Last resort to keep legacy behavior
+        fallback = mapped if mapped else f"{base_symbol}.pro"
+        self._symbol_cache[instrument_upper] = fallback
+        return fallback
 
     def _convert_symbol_reverse(self, symbol: str) -> str:
         """
@@ -164,6 +230,10 @@ class MT5Client:
         """
         if symbol in self.SYMBOL_MAP_REVERSE:
             return self.SYMBOL_MAP_REVERSE[symbol]
+
+        symbol_upper = symbol.upper()
+        if "XAUUSD" in symbol_upper or "GOLD" in symbol_upper:
+            return "XAU_USD"
 
         # Try automatic conversion: EURUSD.pro -> EUR_USD
         base = symbol.replace(".pro", "")
@@ -275,9 +345,11 @@ class MT5Client:
 
         # Calculate spread in pips
         oanda_instrument = self._convert_symbol_reverse(symbol)
-        # Crypto uses direct dollar value, JPY has 2 decimals, standard forex has 4
+        # Crypto uses direct dollar value, metals use 0.01 pip, JPY has 2 decimals, standard forex has 4
         if "BTC" in oanda_instrument or "ETH" in oanda_instrument:
             pip_multiplier = 1  # Spread already in USD
+        elif "XAU" in oanda_instrument or "XAG" in oanda_instrument:
+            pip_multiplier = 100
         elif "JPY" in oanda_instrument:
             pip_multiplier = 100
         else:
@@ -437,6 +509,7 @@ class MT5Client:
         logger.info("Forcing MT5 reconnection...")
         mt5.shutdown()
         self._connected = False
+        self._symbol_cache = {}
         return self._connect()
 
     def _ensure_connected(self) -> bool:
@@ -547,8 +620,11 @@ class MT5Client:
             raise MT5Error("Not connected to MT5 and reconnect failed")
 
         # Set date range
+        explicit_from_date = from_date is not None
         if to_date is None:
-            to_date = datetime.now(timezone.utc)
+            # MT5 server timestamps can be slightly ahead of local UTC clock.
+            # Add a forward buffer so freshly closed deals are not missed.
+            to_date = datetime.now(timezone.utc) + timedelta(hours=6)
         if from_date is None:
             from_date = to_date - timedelta(days=days)
 
@@ -558,8 +634,27 @@ class MT5Client:
         if to_date.tzinfo is None:
             to_date = to_date.replace(tzinfo=timezone.utc)
 
-        # Fetch deals from MT5
-        deals = mt5.history_deals_get(from_date, to_date)
+        # Fetch deals from MT5 (with widening lookback fallback for short windows).
+        def _fetch_deals(_from: datetime, _to: datetime):
+            try:
+                return mt5.history_deals_get(_from, _to)
+            except Exception:
+                return None
+
+        deals = _fetch_deals(from_date, to_date)
+        if (deals is None or len(deals) == 0) and not explicit_from_date:
+            # When caller asks for short history windows, MT5 can lag in recent-deal visibility.
+            # Widen the range progressively so we still reconcile recently closed trades.
+            fallback_days = []
+            for d in (3, 7, 30):
+                if d > int(days):
+                    fallback_days.append(d)
+            for fb_days in fallback_days:
+                fb_from = to_date - timedelta(days=fb_days)
+                deals = _fetch_deals(fb_from, to_date)
+                if deals and len(deals) > 0:
+                    logger.info(f"MT5 history fallback succeeded with {fb_days}d window")
+                    break
 
         if deals is None or len(deals) == 0:
             logger.info("No trade history found in MT5")
@@ -664,6 +759,113 @@ class MT5Client:
 
         logger.info(f"Found {len(closed_trades)} closed trades in MT5 history")
         return closed_trades
+
+    def get_closed_trade_by_position(
+        self,
+        position_id: int | str,
+        days: int = 30,
+    ) -> Optional[dict]:
+        """
+        Fetch one closed trade by MT5 position_id.
+
+        Useful for reconciling DB rows that were closed without P/L when
+        generic history queries missed a fresh close deal.
+        """
+        if not self._ensure_connected():
+            raise MT5Error("Not connected to MT5 and reconnect failed")
+
+        try:
+            pos_id = int(position_id)
+        except Exception:
+            return None
+
+        # See get_history(): include forward buffer for broker/server clock skew.
+        to_date = datetime.now(timezone.utc) + timedelta(hours=6)
+        from_date = to_date - timedelta(days=days)
+
+        deals = mt5.history_deals_get(from_date, to_date, position=pos_id)
+        if not deals:
+            return None
+        deals = [d for d in deals if int(getattr(d, "position_id", 0) or 0) == pos_id]
+        if not deals:
+            return None
+
+        entries = []
+        exits = []
+        symbol = None
+        commission = 0.0
+        swap = 0.0
+        comment = ""
+
+        for deal in deals:
+            if symbol is None:
+                symbol = deal.symbol
+                comment = deal.comment or ""
+            commission += float(getattr(deal, "commission", 0.0) or 0.0)
+            swap += float(getattr(deal, "swap", 0.0) or 0.0)
+            if deal.entry == mt5.DEAL_ENTRY_IN:
+                entries.append(deal)
+            elif deal.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_OUT_BY):
+                exits.append(deal)
+
+        # No exit deal -> position is likely still open.
+        if not exits:
+            return None
+
+        total_exit_volume = sum(float(d.volume) for d in exits)
+        if total_exit_volume <= 0:
+            return None
+
+        # Entry may occasionally be missing from sliced history; infer fallback values.
+        if entries:
+            total_entry_volume = sum(float(d.volume) for d in entries) or total_exit_volume
+            entry_price = sum(float(d.price) * float(d.volume) for d in entries) / total_entry_volume
+            first_entry = min(entries, key=lambda d: d.time)
+            is_long = first_entry.type == mt5.DEAL_TYPE_BUY
+            opened_at = datetime.fromtimestamp(first_entry.time, tz=timezone.utc).isoformat()
+        else:
+            # Infer direction from exit type:
+            # exiting LONG uses SELL deal, exiting SHORT uses BUY deal.
+            first_exit = min(exits, key=lambda d: d.time)
+            is_long = first_exit.type == mt5.DEAL_TYPE_SELL
+            entry_price = float(first_exit.price)
+            opened_at = datetime.fromtimestamp(first_exit.time, tz=timezone.utc).isoformat()
+
+        exit_price = sum(float(d.price) * float(d.volume) for d in exits) / total_exit_volume
+        last_exit = max(exits, key=lambda d: d.time)
+        closed_at = datetime.fromtimestamp(last_exit.time, tz=timezone.utc).isoformat()
+
+        total_pnl = sum(float(getattr(d, "profit", 0.0) or 0.0) for d in exits) + commission + swap
+
+        symbol_info = mt5.symbol_info(symbol) if symbol else None
+        contract_size = getattr(symbol_info, "trade_contract_size", 100000.0) if symbol_info else 100000.0
+        units = int(total_exit_volume * float(contract_size))
+        if not is_long:
+            units = -units
+
+        position_value = abs(units) * float(entry_price)
+        pnl_percent = (float(total_pnl) / position_value * 100.0) if position_value > 0 else 0.0
+
+        instrument = self._convert_symbol_reverse(symbol) if symbol else str(position_id)
+        return {
+            "trade_id": str(pos_id),
+            "instrument": instrument,
+            "direction": "LONG" if is_long else "SHORT",
+            "entry_price": round(float(entry_price), 5),
+            "exit_price": round(float(exit_price), 5),
+            "units": units,
+            "volume": round(float(total_exit_volume), 2),
+            "pnl": round(float(total_pnl), 2),
+            "pnl_percent": round(float(pnl_percent), 4),
+            "opened_at": opened_at,
+            "closed_at": closed_at,
+            "stop_loss": None,
+            "take_profit": None,
+            "commission": round(float(commission), 2),
+            "swap": round(float(swap), 2),
+            "comment": comment,
+            "source": "MT5_SYNC_RECON",
+        }
 
     def shutdown(self):
         """Disconnect from MT5."""

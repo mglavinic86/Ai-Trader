@@ -66,6 +66,8 @@ class AIValidationConfig:
     reject_on_failure: bool = True  # If AI call fails, reject the trade
     timeout_seconds: int = 10
     skip_in_learning_mode: bool = False  # Skip AI validation during learning
+    shadow_on_skip: bool = True  # Run AI shadow review on skipped signals
+    shadow_cooldown_seconds: int = 45  # Min delay between shadow AI calls
 
 
 @dataclass
@@ -151,6 +153,7 @@ class LimitEntryConfig:
     """
     enabled: bool = True
     midpoint_entry: bool = True           # Enter at zone midpoint vs edge
+    allow_market_fallback: bool = False   # If False, only explicit limit-entry signals are executable
     expiry_minutes: int = 60              # Cancel if not filled (= 12 M5 bars)
     max_pending_per_instrument: int = 1   # Max pending orders per instrument
 
@@ -195,6 +198,82 @@ class SelfUpgradeConfig:
         "consecutive_losses": 5,
         "max_block_rate": 50.0
     })
+
+
+@dataclass
+class SMCv2GradeExecutionConfig:
+    """Grade-based execution rules for SMC v2."""
+    enabled: bool = False
+    a_plus_only_live: bool = False
+    enforce_live_hard_gates: bool = True
+    min_confidence_a_plus: int = 45  # 0-100 scale
+    min_confidence_a: int = 60       # 0-100 scale
+
+
+@dataclass
+class SMCv2SweepConfig:
+    """Strict sweep validation controls."""
+    enabled: bool = False
+
+
+@dataclass
+class SMCv2FVGConfig:
+    """Strict FVG validation controls."""
+    enabled: bool = False
+
+
+@dataclass
+class SMCv2HTFPOIConfig:
+    """HTF POI/range gate controls."""
+    enabled: bool = False
+    allow_neutral_with_liquidity_edge: bool = False
+    neutral_liquidity_edge_min: int = 2
+
+
+@dataclass
+class SMCv2KillzoneGateConfig:
+    """Killzone hard gate controls."""
+    enabled: bool = False
+    always_true: bool = False
+
+
+@dataclass
+class SMCv2NewsGateConfig:
+    """News hard gate controls."""
+    enabled: bool = False
+    block_minutes: int = 15
+
+
+@dataclass
+class SMCv2RiskConfig:
+    """Risk thresholds for SMC v2 (phase 1 config only)."""
+    min_rr: dict = field(default_factory=lambda: {
+        "A+": 3.0,
+        "A": 2.5,
+        "B": 2.0,
+    })
+    fx_sl_caps: dict = field(default_factory=lambda: {
+        "min_pips": 4.0,
+        "max_pips": 18.0,
+    })
+    xau_sl_caps: dict = field(default_factory=lambda: {
+        "min_points": 120,
+        "max_points": 450,
+    })
+
+
+@dataclass
+class SMCv2Config:
+    """Feature flags and thresholds for SMC Execution v2."""
+    enabled: bool = False
+    shadow_mode: bool = True
+    grade_execution: SMCv2GradeExecutionConfig = field(default_factory=SMCv2GradeExecutionConfig)
+    strict_sweep: SMCv2SweepConfig = field(default_factory=SMCv2SweepConfig)
+    strict_fvg: SMCv2FVGConfig = field(default_factory=SMCv2FVGConfig)
+    htf_poi_gate: SMCv2HTFPOIConfig = field(default_factory=SMCv2HTFPOIConfig)
+    killzone_gate: SMCv2KillzoneGateConfig = field(default_factory=SMCv2KillzoneGateConfig)
+    news_gate: SMCv2NewsGateConfig = field(default_factory=SMCv2NewsGateConfig)
+    risk: SMCv2RiskConfig = field(default_factory=SMCv2RiskConfig)
 
 
 @dataclass
@@ -317,8 +396,14 @@ class AutoTradingConfig:
     # Smart interval (dynamic scan timing)
     smart_interval: SmartIntervalConfig = field(default_factory=SmartIntervalConfig)
 
+    # SMC Execution v2 (feature-flagged)
+    smc_v2: SMCv2Config = field(default_factory=SMCv2Config)
+
     # Dry run mode (log only, no real trades)
     dry_run: bool = True
+
+    # Verbose runtime explanations in console/log (WHY + NEXT per decision)
+    explain_decisions: bool = True
 
     def validate(self) -> tuple[bool, List[str]]:
         """
@@ -397,6 +482,7 @@ class AutoTradingConfig:
         self_upgrade_data = data.pop("self_upgrade", {})
         limit_entry_data = data.pop("limit_entry", {})
         smart_interval_data = data.pop("smart_interval", {})
+        smc_v2_data = data.pop("smc_v2", {})
 
         stop_day = StopDayConfig(**stop_day_data) if stop_day_data else StopDayConfig()
         cooldown = CooldownConfig(**cooldown_data) if cooldown_data else CooldownConfig()
@@ -473,6 +559,54 @@ class AutoTradingConfig:
         else:
             smart_interval = SmartIntervalConfig()
 
+        # Handle SMC v2 config
+        if smc_v2_data:
+            grade_execution_data = smc_v2_data.get("grade_execution", {})
+            strict_sweep_data = smc_v2_data.get("strict_sweep", {})
+            strict_fvg_data = smc_v2_data.get("strict_fvg", {})
+            htf_poi_gate_data = smc_v2_data.get("htf_poi_gate", {})
+            killzone_gate_data = smc_v2_data.get("killzone_gate", {})
+            news_gate_data = smc_v2_data.get("news_gate", {})
+            risk_data = smc_v2_data.get("risk", {})
+
+            smc_v2 = SMCv2Config(
+                enabled=smc_v2_data.get("enabled", False),
+                shadow_mode=smc_v2_data.get("shadow_mode", True),
+                grade_execution=SMCv2GradeExecutionConfig(
+                    enabled=grade_execution_data.get("enabled", False),
+                    a_plus_only_live=grade_execution_data.get("a_plus_only_live", False),
+                    enforce_live_hard_gates=grade_execution_data.get("enforce_live_hard_gates", True),
+                    min_confidence_a_plus=grade_execution_data.get("min_confidence_a_plus", 45),
+                    min_confidence_a=grade_execution_data.get("min_confidence_a", 60),
+                ),
+                strict_sweep=SMCv2SweepConfig(
+                    enabled=strict_sweep_data.get("enabled", False),
+                ),
+                strict_fvg=SMCv2FVGConfig(
+                    enabled=strict_fvg_data.get("enabled", False),
+                ),
+                htf_poi_gate=SMCv2HTFPOIConfig(
+                    enabled=htf_poi_gate_data.get("enabled", False),
+                    allow_neutral_with_liquidity_edge=htf_poi_gate_data.get("allow_neutral_with_liquidity_edge", False),
+                    neutral_liquidity_edge_min=htf_poi_gate_data.get("neutral_liquidity_edge_min", 2),
+                ),
+                killzone_gate=SMCv2KillzoneGateConfig(
+                    enabled=killzone_gate_data.get("enabled", False),
+                    always_true=killzone_gate_data.get("always_true", False),
+                ),
+                news_gate=SMCv2NewsGateConfig(
+                    enabled=news_gate_data.get("enabled", False),
+                    block_minutes=news_gate_data.get("block_minutes", 15),
+                ),
+                risk=SMCv2RiskConfig(
+                    min_rr=risk_data.get("min_rr", SMCv2RiskConfig().min_rr),
+                    fx_sl_caps=risk_data.get("fx_sl_caps", SMCv2RiskConfig().fx_sl_caps),
+                    xau_sl_caps=risk_data.get("xau_sl_caps", SMCv2RiskConfig().xau_sl_caps),
+                ),
+            )
+        else:
+            smc_v2 = SMCv2Config()
+
         return cls(
             stop_day=stop_day,
             cooldown=cooldown,
@@ -485,6 +619,7 @@ class AutoTradingConfig:
             self_upgrade=self_upgrade,
             limit_entry=limit_entry,
             smart_interval=smart_interval,
+            smc_v2=smc_v2,
             **data
         )
 

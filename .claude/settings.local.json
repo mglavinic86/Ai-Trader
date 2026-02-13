@@ -14,7 +14,15 @@
       "Bash(\"C:\\\\Users\\\\mglav\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\\\\codex\\\\vendor\\\\x86_64-pc-windows-msvc\\\\codex\\\\codex.exe\" exec --skip-git-repo-check \"Drill into src/trading/ directory: analyze each file, describe the classes/functions, explain the call flow between components, and identify the main trading logic. Show how MT5 client integrates with the rest of the system.\")",
       "Bash(find:*)",
       "Bash(powershell -Command \"Get-ChildItem -Recurse -Path src | Where-Object { $_Extension -eq ''.py'' } | Select-Object -ExpandProperty FullName\")",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Skill(triple-ai-orchestrator)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(taskkill:*)",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq *run_daemon*\")",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(cd:*)"
     ]
   }
 }

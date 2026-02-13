@@ -8,12 +8,16 @@
     "confirm_trades": true
   },
   "ai": {
-    "model": "claude-opus-4-5-20251101",
+    "provider": "openai",
+    "use_system_proxy": false,
+    "model": "gpt-4o-mini",
+    "validation_model": "gpt-4o",
     "temperature": 0.3,
     "max_tokens": 4096,
     "use_adversarial": true,
     "use_rag": true,
-    "use_sentiment": true
+    "use_sentiment": true,
+    "fallback_model": "gpt-4.1"
   },
   "analysis": {
     "default_timeframe": "M15",

@@ -292,6 +292,7 @@ class SMCAnalyzer:
         analysis.current_price = m5_candles[-1]["close"]
 
         # Determine direction from SMC confluence
+        candidate_direction = self._candidate_direction_from_sweep(analysis)
         analysis.direction = self._determine_smc_direction(analysis)
 
         # Grade the setup
@@ -315,11 +316,25 @@ class SMCAnalyzer:
             f"choch={'YES' if analysis.ltf_choch else 'NO'}, "
             f"bos={'YES' if analysis.ltf_bos else 'NO'}, "
             f"displacement={'YES' if analysis.ltf_displacement else 'NO'}, "
-            f"fvgs={len(analysis.fvgs)}, obs={len(analysis.order_blocks)}, "
+            f"fvgs_detected={len(analysis.fvgs)}, "
+            f"fvgs_valid_strict=0, "
+            f"candidate_direction={candidate_direction}, "
+            f"confirmed_direction={analysis.direction if analysis.direction else 'NONE'}, "
+            f"obs={len(analysis.order_blocks)}, "
             f"grade={analysis.setup_grade}, direction={analysis.direction}"
         )
 
         return analysis
+
+    def _candidate_direction_from_sweep(self, analysis: SMCAnalysis) -> str:
+        """Directional candidate before HTF-aligned confirmation."""
+        if not analysis.sweep_detected:
+            return "NONE"
+        if analysis.sweep_detected.sweep_direction == "SELLSIDE_SWEEP":
+            return "LONG"
+        if analysis.sweep_detected.sweep_direction == "BUYSIDE_SWEEP":
+            return "SHORT"
+        return "NONE"
 
     def _determine_smc_direction(self, analysis: SMCAnalysis) -> Optional[str]:
         """
@@ -348,17 +363,12 @@ class SMCAnalyzer:
                 sweep_direction = "LONG"
             elif bos and bos.direction == "BULLISH":
                 sweep_direction = "LONG"
-            elif sweep.reversal_confirmed:
-                # Sweep with reversal but no structure shift yet
-                sweep_direction = "LONG"
 
         elif sweep.sweep_direction == "BUYSIDE_SWEEP":
             # Buyside swept (stops above taken out) → expect SHORT
             if choch and choch.direction == "BEARISH":
                 sweep_direction = "SHORT"
             elif bos and bos.direction == "BEARISH":
-                sweep_direction = "SHORT"
-            elif sweep.reversal_confirmed:
                 sweep_direction = "SHORT"
 
         if not sweep_direction:

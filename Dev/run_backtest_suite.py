@@ -9,6 +9,7 @@ import sys
 import os
 import json
 import time
+import argparse
 import tempfile
 from datetime import datetime, timedelta
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -309,6 +310,11 @@ def print_skip_analysis(results):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run SMC backtest suite.")
+    parser.add_argument("--workers", type=int, default=6, help="Process workers for suite (default: 6)")
+    args = parser.parse_args()
+    max_workers = max(1, int(args.workers))
+
     print("=" * 80)
     print("SMC BACKTEST SUITE - R:R VALIDATION (extended period)")
     print("=" * 80)
@@ -351,7 +357,7 @@ def main():
     print(f"Initial Capital: {initial_capital:,.0f} EUR")
     print(f"Total Configurations: {total_configs}")
     print(f"Signal interval: 6 (every 30 min)")
-    print(f"Max workers: 6")
+    print(f"Max workers: {max_workers}")
 
     # --- Load Data (main process only, MT5 singleton) ---
     print("\n--- LOADING DATA ---")
@@ -449,20 +455,43 @@ def main():
             ))
 
     # --- Run Backtests (multiprocessing) ---
-    print(f"\n--- RUNNING {len(jobs)} BACKTESTS (6 workers) ---")
+    print(f"\n--- RUNNING {len(jobs)} BACKTESTS ({max_workers} workers) ---")
     suite_start = time.time()
     results = []
+    used_sequential_fallback = False
+    try:
+        if max_workers == 1:
+            raise PermissionError("Sequential mode requested (workers=1).")
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_label = {}
+            for job in jobs:
+                future = executor.submit(run_single_backtest, job)
+                future_to_label[future] = job[0]  # label
 
-    with ProcessPoolExecutor(max_workers=6) as executor:
-        future_to_label = {}
+            for future in as_completed(future_to_label):
+                label = future_to_label[future]
+                try:
+                    summary = future.result()
+                    results.append(summary)
+                    if "error" in summary:
+                        print(f"  {label}: ERROR - {summary['error']}")
+                    else:
+                        print(
+                            f"  {label}: {summary['trades']} trades, "
+                            f"WR={summary['win_rate']:.0f}%, "
+                            f"Ret={summary['return_pct']:+.2f}%, "
+                            f"{summary['run_time']:.0f}s"
+                        )
+                except Exception as e:
+                    print(f"  {label}: WORKER ERROR - {e}")
+                    results.append({"label": label, "error": str(e)})
+    except PermissionError:
+        used_sequential_fallback = True
+        print("  ProcessPool unavailable -> running sequential fallback...")
         for job in jobs:
-            future = executor.submit(run_single_backtest, job)
-            future_to_label[future] = job[0]  # label
-
-        for future in as_completed(future_to_label):
-            label = future_to_label[future]
+            label = job[0]
             try:
-                summary = future.result()
+                summary = run_single_backtest(job)
                 results.append(summary)
                 if "error" in summary:
                     print(f"  {label}: ERROR - {summary['error']}")
@@ -479,6 +508,8 @@ def main():
 
     suite_elapsed = time.time() - suite_start
     print(f"\nAll backtests completed in {suite_elapsed:.1f}s")
+    if used_sequential_fallback:
+        print("Mode: sequential fallback")
 
     # Sort results by instrument then label for consistent output
     results.sort(key=lambda x: x.get("label", ""))

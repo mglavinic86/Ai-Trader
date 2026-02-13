@@ -1,0 +1,132 @@
+=== Page 2 ===
+2.
+Fair Value Gap (FVG) je candlestick pattern od 3
+svjećice koji označava neravnotežu na cjenovnom grafu
+koja nastaje kada cijena ostavi "prazninu" između tijela
+svijeća, obično tijekom snažnog trenda ili volatilnog
+kretanja.
+FVG se javlja kada se sljedeća svijeća ne "popuni"
+prostor između high-a prethodne svijeće i low-a sljedeće
+svijeće, ili obrnuto.
+Ova praznina označava područje u kojem nije bilo
+dovoljno kupaca ili prodavača za ravnotežu.ŠTO JE TO FVG?
+
+=== Page 3 ===
+3.KAKVI FVG SVE POSTOJE 
+I ČEMU SLUŽE?
+Postoje Bullish i Bearish FVG, koji signaliziraju
+područje potencijalnog povratka cijene kako bi
+"popunila prazninu" i rebalansirala market.
+Traderi ciljaju ulazak u poziciju u području FVG-a,
+očekujući povratak cijene prema toj razini.
+Pokazuje gdje je tržište bilo "neefikasno" i gdje
+institucije mogu ciljati za ulazak ili izlazak iz
+pozicija.
+Koristi se zajedno uz druge konfirmacije i
+koncepte za najefikasnije rezultate.
+
+=== Page 4 ===
+FVG
+4.FVG PRIMJERI
+FVG
+Bearish FVG Bullish FVG
+
+=== Page 5 ===
+5.FUNKCIJA FVG-A
+Primjer kada se cijena vraća
+rebalansirati FVG (bullish primjer)Primjer kada se cijena vraća
+rebalansirati FVG (bearish primjer)Funkcija FVG-a nakon uspješnog rebalansiranja marketa je napad na sljedeći najbliži
+Liquidity. U dosta slučajeva, to upravo budu Swing High i Swing Low zone ovisno o trendu
+u kojem se nalazimo. U lijevom primjeru možemo vidjeti napad na Swing High i nastavak
+uptrend-a, dok u desnom vidimo napad na Swing Long i nastavak downtrend-a.
+
+=== Page 6 ===
+6.KAKO IZGLEDA RESPEKTIRANI FVG?
+Respektirani Bearish FVG
+Respektirani Bullish FVG Respektirani Bullish FVGRespektirani FVG je taj gdje wick ili
+tijelo od svijećice i dalje poštuje
+FVG odnosno gdje se tijelo svijećice
+ne zatvara ispod ili iznad FVG-aU sva 3 primjera možete vidjeti
+respektirane FVG. 
+Međutim, kako najbolje prepoznati
+kada je FVG respektiran?
+
+=== Page 7 ===
+7.KAKO JA KORISTIM FVG?
+FVG koristim kada ga imamo iznad
+Demand zone i ispod Supply zoneFVG koristim kada nastaje
+ jak momentum
+Bullish Primjer Bullish Primjer Bearish Primjer Bearish Primjer
+FVG
+Demand
+FVG
+Supply
+FVG
+Supply
+FVG
+Demand
+11.
+
+=== Page 8 ===
+8.FVG IZNAD DEMAND / ISPOD SUPPLY ZONE
+- PRIMJERI 
+Bullish Primjer #1
+Bearish Primjer #1Bullish Primjer #2
+Bearish Primjer #2
+
+=== Page 9 ===
+9.FVG KADA NASTAJE JAK MOMENTUM
+- PRIMJERI
+Bullish Primjer #1 Bullish Primjer #2
+Bearish Primjer #2
+11.
+
+=== Page 10 ===
+FVG
+FVG
+10.Slika sa većeg TF Slika sa manjeg TF (Zumirana sliku zadnjeg ragne-a)
+Na manjem TF možemo vidjeti nekoliko Swing Lows koji
+nisu vidljivi na većem TF i kako cijena skuplja njihovu
+likvidnost prije pokreta prema gore.X
+X
+FVG + SWING HIGHS & LOWS
+- Bullish Primjer
+
+=== Page 11 ===
+11.FVG + SWING HIGHS & LOWS
+- Bullish Primjer sa Charta
+Slika sa većeg TF (Monthly)
+Primjer gdje cijena želi rebalansirati Monthly FVGSlika sa manjeg TF (Weekly)
+Kada se spustimo na manji timeframe možemo točno vidjeti
+Swing Lows sa lijeve strane koji nam služe kao Liquidity unutar
+FVG-a sa Monthly TF.
+
+=== Page 12 ===
+12.FVG + SWING HIGHS & LOWS 
+- Bullish Primjer sa Charta
+Primjer gdje cijena želi rebalansirati FVG Uz FVG, također imamo i Swing Low sa lijeve strane
+koji nam služi kao Liquidity pored samog FVG-a.
+
+=== Page 13 ===
+13.FVG + SWING HIGHS & LOWS
+- Bearish Primjer
+FVG
+Supply Zona
+X
+FVG
+Supply Zona X
+Bearish FVG primjer kao Liquidity
+ koji se nalazi ispod Supply zoneCijena skuplja likvidnost i reagira od Bearish FVG-a,
+ a ne od Supply Zone
+
+=== Page 14 ===
+14.FVG + SWING HIGHS & LOWS
+- Bearish Primjer sa Charta
+Reakcija od FVG-a, a ne od Supply Zone
+Ponekad se zna dogoditi da cijena samo pokupi Liquidity
+i odbije se od FVG-a bez reakcije od Supply Zone.
+U takvim situacijama da budemo sigurni da nećemo
+propustiti entry, spuštamo se uvijek na manji timeframe
+za konfirmaciju.FVG primjer kao Liquidity koji se nalazi ispod Supply zone
+Swing Highs koji su ostali ispod FVG-a su High
+Probability Liquidity

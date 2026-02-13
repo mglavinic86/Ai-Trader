@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
+from types import SimpleNamespace
 
 from src.trading.mt5_client import MT5Client, MT5Error
 from src.core.auto_config import AutoTradingConfig, ScalpingConfig
@@ -43,9 +44,15 @@ from src.smc import SMCAnalyzer, SMCAnalysis
 from src.smc.sequence_tracker import SequenceTracker
 from src.analysis.confidence_calibrator import ConfidenceCalibrator
 from src.analysis.cross_asset_detector import CrossAssetDetector
+from src.analysis.llm_engine import LLMEngine
 from src.utils.database import db
 from src.utils.logger import logger
-from src.utils.instrument_profiles import get_profile, is_in_session
+from src.utils.instrument_profiles import (
+    get_profile,
+    get_profile_strict,
+    is_in_session,
+    normalize_instrument_symbol,
+)
 from src.analysis.news_filter import news_filter
 from src.upgrade.filter_registry import get_filter_registry
 
@@ -120,6 +127,16 @@ class ScanResult:
     scan_duration_ms: int = 0
 
 
+@dataclass
+class SMCv2Evaluation:
+    """Shadow evaluation result for SMC v2 gating."""
+    setup_grade: str = "NO_TRADE"
+    allow_trade: bool = False
+    reason: str = ""
+    gates: Dict[str, Optional[bool]] = field(default_factory=dict)
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
 class MarketScanner:
     """
     SMC-based market scanner for auto-trading.
@@ -148,6 +165,8 @@ class MarketScanner:
         self.sequence_tracker = SequenceTracker(db)
         self.calibrator = ConfidenceCalibrator(db)
         self.cross_asset = CrossAssetDetector(client, db)
+        self.llm_engine = LLMEngine()
+        self._last_ai_shadow_at: Optional[datetime] = None
 
         # Thread pool for parallel scanning
         self._executor = ThreadPoolExecutor(max_workers=4)
@@ -162,6 +181,57 @@ class MarketScanner:
             f"MarketScanner initialized [SMC+ISI MODE] with {len(config.instruments)} instruments "
             f"(Filters: {filter_status}, Calibration: {calibration_status})"
         )
+        smc_v2 = getattr(config, "smc_v2", None)
+        live_hard_gate_scope = (
+            bool(smc_v2 and smc_v2.enabled and smc_v2.grade_execution.enabled)
+            and any(("XAU" in i.upper() or "GBP" in i.upper()) for i in config.instruments)
+        )
+        logger.info(
+            "SMC_V2_STARTUP | "
+            f"smc_v2.enabled={self._fmt_bool(getattr(smc_v2, 'enabled', False))}, "
+            f"grade_execution.enabled={self._fmt_bool(getattr(getattr(smc_v2, 'grade_execution', None), 'enabled', False))}, "
+            f"killzone_gate_live={self._fmt_bool(bool(smc_v2 and smc_v2.killzone_gate.enabled) or live_hard_gate_scope)}, "
+            f"htf_poi_gate_live={self._fmt_bool(bool(smc_v2 and smc_v2.htf_poi_gate.enabled) or live_hard_gate_scope)}, "
+            f"market_order_fallback_enabled={self._fmt_bool(getattr(config.limit_entry, 'allow_market_fallback', False))}"
+        )
+
+    def _explain(self, instrument: str, why: str, next_step: str) -> None:
+        """Emit verbose WHY/NEXT logs when explanation mode is enabled."""
+        if not getattr(self.config, "explain_decisions", False):
+            return
+        logger.info(f"WHY  | {instrument}: {why}")
+        logger.info(f"NEXT | {instrument}: {next_step}")
+
+    def _next_step_from_reason(self, reason: str) -> str:
+        """Map skip reasons to clear next-step guidance."""
+        r = (reason or "").lower()
+        if "spread too high" in r:
+            return "Wait for tighter spread, then re-run full SMC pipeline."
+        if "outside trading session" in r:
+            return "Wait until allowed session window opens, then rescan."
+        if "news filter" in r:
+            return "Wait until news cooldown ends, then re-evaluate setup."
+        if "htf bias neutral" in r:
+            return "Wait for clear HTF structure/bias before LTF confirmation."
+        if "no liquidity sweep" in r:
+            return "Wait for liquidity sweep event, then look for CHoCH/BOS."
+        if "no choch or bos" in r:
+            return "Wait for LTF structure shift (CHoCH or BOS) before entry."
+        if "no clear smc direction" in r:
+            return "Wait for directional confirmation from SMC signals."
+        if "setup grade: no_trade" in r:
+            return "Wait for stronger confluence to upgrade setup grade."
+        if "confidence" in r:
+            return "Wait for stronger confluence to raise confidence score."
+        if "learning blocked" in r:
+            return "Respect historical guardrail and wait for safer context."
+        if "r:r" in r:
+            return "Wait for better entry/TP geometry to improve risk-reward."
+        if "filter:" in r:
+            return "Wait until blocking filter condition is cleared."
+        if "not enough m5 data" in r:
+            return "Collect more candles, then repeat the scan."
+        return "Proceed to next scheduled scan cycle."
 
     def scan_all_instruments(self) -> List[TradingSignal]:
         """Scan all configured instruments for SMC trading opportunities."""
@@ -208,6 +278,15 @@ class MarketScanner:
                 "signal_instruments": [s.instrument for s in signals],
             }
         })
+        db.log_scanner_stats({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "instruments_scanned": len(self.config.instruments),
+            "signals_found": len(signals),
+            # Executed count is tracked by executor after scan.
+            "signals_executed": 0,
+            "scan_duration_ms": duration_ms,
+            "mode": "scalping",
+        })
 
         return signals
 
@@ -246,45 +325,67 @@ class MarketScanner:
             "instrument": instrument,
             "reasoning": f"Starting SMC analysis of {instrument}..."
         })
+        self._explain(
+            instrument,
+            "Started full scan pipeline: pre-filters -> SMC HTF/LTF -> risk gates.",
+            "Fetch live price and validate spread/session/news first."
+        )
 
         try:
+            canonical_instrument = normalize_instrument_symbol(instrument)
+
+            # Strict profile requirement: fail fast when profile is not explicitly defined.
+            try:
+                profile = get_profile_strict(canonical_instrument)
+            except KeyError as e:
+                return self._skip(
+                    instrument,
+                    start_time,
+                    f"Strict profile missing: {e}",
+                    {"instrument": instrument, "canonical_instrument": canonical_instrument},
+                )
+
             # ==========================================
             # STEP 1: Pre-filters (quick rejections)
             # ==========================================
 
             # 1a. Get current price
-            price = self.client.get_price(instrument)
+            price = self.client.get_price(canonical_instrument)
 
             # 1b. Check spread
-            if not self._check_spread(price, instrument):
+            if not self._check_spread(price, canonical_instrument):
                 return self._skip(instrument, start_time,
                                   f"Spread too high: {price['spread_pips']:.1f} pips",
                                   {"spread_pips": price.get("spread_pips")})
 
             # 1c. Check trading session
-            profile = get_profile(instrument)
             if not is_in_session(profile):
                 return self._skip(instrument, start_time,
                                   f"Outside trading session (allowed: {profile.get('sessions', [])})")
 
             # 1d. Check news calendar
-            should_avoid, news_reason = news_filter.should_avoid_trade(instrument)
+            should_avoid, news_reason = news_filter.should_avoid_trade(canonical_instrument)
             if should_avoid:
                 return self._skip(instrument, start_time,
                                   f"News filter: {news_reason}")
+            self._explain(
+                instrument,
+                f"Pre-filters passed (spread={price.get('spread_pips', 'n/a')} pips, session and news OK).",
+                "Load H4/H1/M5 candles and run HTF structure analysis."
+            )
 
             # ==========================================
             # STEP 2: Fetch candle data (H4, H1, M5)
             # ==========================================
 
             # H4 candles for HTF structure
-            h4_candles = self.client.get_candles(instrument, "H4", 100)
+            h4_candles = self.client.get_candles(canonical_instrument, "H4", 100)
 
             # H1 candles for liquidity map + session levels
-            h1_candles = self.client.get_candles(instrument, "H1", 100)
+            h1_candles = self.client.get_candles(canonical_instrument, "H1", 100)
 
             # M5 candles for LTF signal
-            m5_candles = self.client.get_candles(instrument, "M5", 100)
+            m5_candles = self.client.get_candles(canonical_instrument, "M5", 100)
 
             if len(m5_candles) < 30:
                 return self._skip(instrument, start_time,
@@ -294,43 +395,145 @@ class MarketScanner:
             # STEP 3: SMC HTF Analysis (H4/H1)
             # ==========================================
 
-            htf_result = self.smc_analyzer.analyze_htf(h4_candles, h1_candles, instrument)
+            htf_result = self.smc_analyzer.analyze_htf(h4_candles, h1_candles, canonical_instrument)
 
-            # HARD GATE: HTF must not be neutral
+            # HARD GATE (with optional soft-relax): HTF must not be neutral
             if htf_result["htf_bias"] == "NEUTRAL":
-                return self._skip(instrument, start_time,
-                                  f"HTF bias NEUTRAL (structure: {htf_result['htf_structure']})",
-                                  {"htf_structure": htf_result["htf_structure"]})
+                smc_v2_cfg = getattr(self.config, "smc_v2", None)
+                htf_gate_cfg = getattr(smc_v2_cfg, "htf_poi_gate", None) if smc_v2_cfg else None
+                allow_neutral_relax = bool(
+                    smc_v2_cfg
+                    and smc_v2_cfg.enabled
+                    and htf_gate_cfg
+                    and getattr(htf_gate_cfg, "allow_neutral_with_liquidity_edge", False)
+                )
+                min_edge = int(getattr(htf_gate_cfg, "neutral_liquidity_edge_min", 2)) if htf_gate_cfg else 2
+                liquidity_map = htf_result.get("liquidity_map")
+                buyside_count = len(getattr(liquidity_map, "buyside", []) or [])
+                sellside_count = len(getattr(liquidity_map, "sellside", []) or [])
+                liquidity_edge = abs(buyside_count - sellside_count)
+                if not (allow_neutral_relax and liquidity_edge >= min_edge):
+                    return self._skip(instrument, start_time,
+                                      f"HTF bias NEUTRAL (structure: {htf_result['htf_structure']})",
+                                      {
+                                          "htf_structure": htf_result["htf_structure"],
+                                          "neutral_relax_enabled": allow_neutral_relax,
+                                          "liquidity_edge": liquidity_edge,
+                                          "liquidity_edge_min": min_edge,
+                                      })
+                self._explain(
+                    instrument,
+                    f"HTF NEUTRAL relaxed by liquidity edge ({liquidity_edge} >= {min_edge}).",
+                    "Proceed to LTF trigger checks with strict confirmation gates."
+                )
+            self._explain(
+                instrument,
+                f"HTF gate passed (bias={htf_result['htf_bias']}, structure={htf_result['htf_structure']}).",
+                "Run LTF SMC trigger checks: sweep, CHoCH/BOS, and setup grade."
+            )
 
             # ==========================================
             # STEP 4: SMC LTF Analysis (M5)
             # ==========================================
 
-            smc_analysis = self.smc_analyzer.analyze_ltf(m5_candles, htf_result, instrument)
-
+            smc_analysis = self.smc_analyzer.analyze_ltf(m5_candles, htf_result, canonical_instrument)
+            ltf_within_killzone, _ = self._is_in_killzone_for_instrument(profile)
+            ltf_candidate_direction = self._candidate_direction_from_sweep(smc_analysis)
+            smc_v2_cfg = getattr(self.config, "smc_v2", None)
+            grade_exec_cfg = getattr(smc_v2_cfg, "grade_execution", None) if smc_v2_cfg else None
+            demo_bootstrap_relax = bool(
+                smc_v2_cfg
+                and smc_v2_cfg.enabled
+                and grade_exec_cfg
+                and not grade_exec_cfg.enforce_live_hard_gates
+            )
+            ltf_direction_hint = smc_analysis.direction if smc_analysis.direction else (
+                ltf_candidate_direction if ltf_candidate_direction != "NONE" else None
+            )
+            ltf_htf_poi_gate, ltf_htf_range_position, ltf_htf_poi_reason = self._compute_htf_range_and_poi_gate(
+                smc_analysis=smc_analysis,
+                direction_hint=ltf_direction_hint,
+            )
+            ltf_eval_details = {
+                "htf_range_position": ltf_htf_range_position,
+                "strict_fvg_count": 0,
+                "fvg_in_htf_poi_count": 0,
+            }
+            ltf_eval_gates = {
+                "within_killzone": ltf_within_killzone,
+                "htf_poi_gate": ltf_htf_poi_gate,
+            }
             # HARD GATE: Must have sweep
             if not smc_analysis.sweep_detected:
                 return self._skip(instrument, start_time,
                                   "No liquidity sweep detected",
-                                  {"htf_bias": htf_result["htf_bias"]})
+                                  self._smc_skip_details(
+                                      smc_analysis,
+                                      {"htf_bias": htf_result["htf_bias"]},
+                                      eval_details=ltf_eval_details,
+                                      gates=ltf_eval_gates,
+                                  ))
 
             # HARD GATE: Must have CHoCH or BOS
             if not smc_analysis.ltf_choch and not smc_analysis.ltf_bos:
-                return self._skip(instrument, start_time,
-                                  "No CHoCH or BOS on LTF",
-                                  {"sweep": smc_analysis.sweep_detected.to_dict()})
+                if demo_bootstrap_relax and smc_analysis.ltf_displacement and ltf_candidate_direction != "NONE":
+                    smc_analysis.direction = ltf_candidate_direction
+                    if smc_analysis.setup_grade == "NO_TRADE":
+                        smc_analysis.setup_grade = "B"
+                    smc_analysis.confidence = max(int(smc_analysis.confidence or 0), 68)
+                    smc_analysis.grade_reasons.append(
+                        "DEMO_RELAX: sweep+displacement candidate direction without CHoCH/BOS"
+                    )
+                else:
+                    return self._skip(instrument, start_time,
+                                      "No CHoCH or BOS on LTF",
+                                      self._smc_skip_details(
+                                          smc_analysis,
+                                          {"sweep": smc_analysis.sweep_detected.to_dict() if smc_analysis.sweep_detected else None},
+                                          eval_details=ltf_eval_details,
+                                          gates=ltf_eval_gates,
+                                      ))
 
             # HARD GATE: Must have direction
             if not smc_analysis.direction:
-                return self._skip(instrument, start_time,
-                                  "No clear SMC direction",
-                                  {"htf_bias": htf_result["htf_bias"],
-                                   "grade_reasons": smc_analysis.grade_reasons})
+                if demo_bootstrap_relax and ltf_candidate_direction != "NONE":
+                    smc_analysis.direction = ltf_candidate_direction
+                    if smc_analysis.setup_grade == "NO_TRADE":
+                        smc_analysis.setup_grade = "B"
+                    smc_analysis.confidence = max(int(smc_analysis.confidence or 0), 68)
+                    smc_analysis.grade_reasons.append("DEMO_RELAX: candidate direction fallback")
+                else:
+                    return self._skip(instrument, start_time,
+                                      "No clear SMC direction",
+                                      self._smc_skip_details(
+                                          smc_analysis,
+                                          {
+                                              "htf_bias": htf_result["htf_bias"],
+                                              "grade_reasons": smc_analysis.grade_reasons,
+                                          },
+                                          eval_details=ltf_eval_details,
+                                          gates=ltf_eval_gates,
+                                      ))
 
             # HARD GATE: Setup grade must be B or better
             if smc_analysis.setup_grade == "NO_TRADE":
-                return self._skip(instrument, start_time,
-                                  f"Setup grade: NO_TRADE ({', '.join(smc_analysis.grade_reasons[:3])})")
+                if demo_bootstrap_relax and smc_analysis.direction and smc_analysis.sweep_detected:
+                    smc_analysis.setup_grade = "B"
+                    smc_analysis.confidence = max(int(smc_analysis.confidence or 0), 68)
+                    smc_analysis.grade_reasons.append("DEMO_RELAX: NO_TRADE promoted to B")
+                else:
+                    return self._skip(instrument, start_time,
+                                      f"Setup grade: NO_TRADE ({', '.join(smc_analysis.grade_reasons[:3])})",
+                                      self._smc_skip_details(
+                                          smc_analysis,
+                                          eval_details=ltf_eval_details,
+                                          gates=ltf_eval_gates,
+                                      ))
+            self._explain(
+                instrument,
+                f"LTF triggers passed (grade={smc_analysis.setup_grade}, direction={smc_analysis.direction}).",
+                "Compute confidence (SMC + sentiment + ISI), then apply learning/filter gates."
+            )
 
             direction = smc_analysis.direction
 
@@ -339,7 +542,7 @@ class MarketScanner:
             # ==========================================
 
             # Still run technical first for sequence tracker input
-            technical = self.technical_analyzer.analyze(m5_candles, instrument)
+            technical = self.technical_analyzer.analyze(m5_candles, canonical_instrument)
 
             seq_state = self.sequence_tracker.update(instrument, smc_analysis, technical)
             seq_modifier = seq_state.confidence_modifier()
@@ -361,24 +564,28 @@ class MarketScanner:
             # ==========================================
 
             # 5a. Market Regime filter (still useful)
-            regime_ok, regime_reason = self._check_market_regime(technical, instrument)
+            regime_ok, regime_reason = self._check_market_regime(technical, canonical_instrument)
             if not regime_ok:
                 return self._skip(instrument, start_time,
                                   f"Regime filter: {regime_reason}",
-                                  {"market_regime": technical.market_regime,
-                                   "smc_grade": smc_analysis.setup_grade})
+                                  self._smc_skip_details(
+                                      smc_analysis,
+                                      {
+                                          "market_regime": technical.market_regime,
+                                      },
+                                  ))
 
             # ==========================================
             # STEP 6: Sentiment (additional edge)
             # ==========================================
 
-            sentiment = self.sentiment_analyzer.analyze(m5_candles, technical, instrument=instrument)
+            sentiment = self.sentiment_analyzer.analyze(m5_candles, technical, instrument=canonical_instrument)
 
             # ==========================================
             # STEP 6.5: ISI Cross-Asset Divergence
             # ==========================================
 
-            divergence_modifier = self.cross_asset.get_confidence_modifier(instrument, direction)
+            divergence_modifier = self.cross_asset.get_confidence_modifier(canonical_instrument, direction)
 
             # ==========================================
             # STEP 7: Calculate confidence (SMC + ISI)
@@ -401,15 +608,28 @@ class MarketScanner:
             adversarial = self.adversarial_engine.analyze(
                 technical, sentiment, instrument, direction
             )
-            confidence_result = self.confidence_calculator.calculate(
-                technical, sentiment, adversarial, 0
-            )
-            # Override with SMC+ISI-based confidence
             raw_score = max(0, min(100, base_confidence))
 
             # ISI: Bayesian calibration (Platt Scaling)
             calibrated_score = self.calibrator.calibrate(raw_score)
-            confidence_result.confidence_score = calibrated_score
+            confidence_result = ConfidenceResult(
+                confidence_score=calibrated_score,
+                technical_score=int(getattr(technical, "technical_score", 0) or 0),
+                sentiment_score=int((sentiment.sentiment_score + 1) * 50),
+                adversarial_adjustment=int(getattr(adversarial, "confidence_adjustment", 0) or 0),
+                rag_penalty=0,
+                risk_tier="SMC_V2",
+                risk_percent=0.0,
+                can_trade=True,
+                breakdown={
+                    "smc_grade_confidence": smc_confidence,
+                    "sentiment_adjustment": sent_adjustment,
+                    "sequence_modifier": seq_modifier,
+                    "divergence_modifier": divergence_modifier,
+                    "raw_score": raw_score,
+                    "calibrated_score": calibrated_score,
+                },
+            )
 
             # Generate SMC-based bull/bear case
             confidence_result.bull_case = self._build_smc_bull_case(smc_analysis)
@@ -427,7 +647,7 @@ class MarketScanner:
                 "smc_grade": smc_analysis.setup_grade,
             }
             learning_insights = self.learning_engine.get_insights_for_trade(
-                instrument, direction, learning_context
+                canonical_instrument, direction, learning_context
             )
 
             original_confidence = confidence_result.confidence_score
@@ -446,7 +666,13 @@ class MarketScanner:
             if not learning_insights.should_trade:
                 return self._skip(instrument, start_time,
                                   f"Learning blocked: {', '.join(learning_insights.warnings[:2])}",
-                                  {"smc_grade": smc_analysis.setup_grade})
+                                  self._smc_skip_details(
+                                      smc_analysis,
+                                      {
+                                          "confidence": confidence_result.confidence_score,
+                                          "learning_warnings": learning_insights.warnings[:3],
+                                      },
+                                  ))
 
             # ==========================================
             # STEP 9: Confidence threshold check
@@ -460,22 +686,33 @@ class MarketScanner:
             if confidence_result.confidence_score < active_threshold:
                 return self._skip(instrument, start_time,
                                   f"Confidence {confidence_result.confidence_score}% < {active_threshold}%",
-                                  {"smc_grade": smc_analysis.setup_grade,
-                                   "confidence": confidence_result.confidence_score})
+                                  self._smc_skip_details(
+                                      smc_analysis,
+                                      {
+                                          "confidence": confidence_result.confidence_score,
+                                          "threshold": active_threshold,
+                                      },
+                                  ))
 
             # ==========================================
             # STEP 10: Filter chain (self-upgrade system)
             # ==========================================
 
             filter_result = self._run_filter_chain(
-                instrument, direction,
+                canonical_instrument, direction,
                 confidence_result.confidence_score,
                 technical, sentiment
             )
             if not filter_result.passed:
                 return self._skip(instrument, start_time,
                                   f"Filter: {filter_result.reason}",
-                                  {"blocking_filter": filter_result.blocking_filter})
+                                  self._smc_skip_details(
+                                      smc_analysis,
+                                      {
+                                          "confidence": confidence_result.confidence_score,
+                                          "blocking_filter": filter_result.blocking_filter,
+                                      },
+                                  ))
 
             # ==========================================
             # STEP 11: SL/TP from SMC analysis
@@ -490,7 +727,28 @@ class MarketScanner:
             else:
                 # Fallback to ATR-based
                 sl, tp = self._calculate_sl_tp_fallback(
-                    entry_price, direction, technical, instrument
+                    entry_price, direction, technical, canonical_instrument
+                )
+
+            # Optional SMC v2 SL-cap normalization/clamp (min clamp, max block).
+            sl, sl_block_reason, sl_details = self._apply_smc_v2_sl_caps(
+                instrument=canonical_instrument,
+                entry_price=entry_price,
+                stop_loss=sl,
+                direction=direction,
+            )
+            if sl_block_reason:
+                return self._skip(
+                    instrument,
+                    start_time,
+                    sl_block_reason,
+                    self._smc_skip_details(
+                        smc_analysis,
+                        {
+                            "confidence": confidence_result.confidence_score,
+                            **sl_details,
+                        },
+                    ),
                 )
 
             # ==========================================
@@ -499,14 +757,94 @@ class MarketScanner:
 
             risk = abs(entry_price - sl)
             reward = abs(tp - entry_price)
+            if risk <= 0 or reward <= 0:
+                return self._skip(
+                    instrument,
+                    start_time,
+                    "Invalid SL/TP geometry (risk/reward <= 0)",
+                    self._smc_skip_details(
+                        smc_analysis,
+                        {
+                            "confidence": confidence_result.confidence_score,
+                            "entry_price": entry_price,
+                            "stop_loss": sl,
+                            "take_profit": tp,
+                            "risk": risk,
+                            "reward": reward,
+                        },
+                    ),
+                )
             risk_reward = reward / risk if risk > 0 else 0
 
-            effective_target_rr = profile.get("target_rr", self.config.scalping.target_rr)
+            effective_target_rr = self._get_effective_min_rr(
+                profile=profile,
+                setup_grade=smc_analysis.setup_grade,
+            )
             if risk_reward < effective_target_rr - 0.01:
                 return self._skip(instrument, start_time,
                                   f"R:R {risk_reward:.2f} < {effective_target_rr}",
-                                  {"risk_reward": risk_reward,
-                                   "smc_grade": smc_analysis.setup_grade})
+                                  self._smc_skip_details(
+                                      smc_analysis,
+                                      {
+                                          "confidence": confidence_result.confidence_score,
+                                          "risk_reward": risk_reward,
+                                          "target_rr": effective_target_rr,
+                                          "entry_price": entry_price,
+                                          "stop_loss": sl,
+                                          "take_profit": tp,
+                                          "risk": risk,
+                                          "reward": reward,
+                                      },
+                                  ))
+
+            v2_eval = self._evaluate_setup_v2(
+                instrument=canonical_instrument,
+                profile=profile,
+                smc_analysis=smc_analysis,
+                technical=technical,
+                confidence=confidence_result.confidence_score,
+                entry_price=entry_price,
+                stop_loss=sl,
+                risk_reward=risk_reward,
+            )
+            if self._requires_live_hard_gates(canonical_instrument):
+                if v2_eval.gates.get("within_killzone") is False:
+                    return self._skip(
+                        instrument,
+                        start_time,
+                        "SMC v2 live gate: outside killzone",
+                        self._smc_skip_details(
+                            smc_analysis,
+                            {
+                                "confidence": confidence_result.confidence_score,
+                                "gates": v2_eval.gates,
+                                "eval_details": v2_eval.details,
+                            },
+                        ),
+                    )
+                if v2_eval.gates.get("htf_poi_gate") is False:
+                    return self._skip(
+                        instrument,
+                        start_time,
+                        "SMC v2 live gate: HTF POI/range gate failed",
+                        self._smc_skip_details(
+                            smc_analysis,
+                            {
+                                "confidence": confidence_result.confidence_score,
+                                "gates": v2_eval.gates,
+                                "eval_details": v2_eval.details,
+                            },
+                        ),
+                    )
+            self._log_setup_label_if_enabled(
+                instrument=instrument,
+                direction=direction,
+                setup_grade=smc_analysis.setup_grade,
+                confidence=confidence_result.confidence_score,
+                risk_reward=risk_reward,
+                reason="SMC v2 shadow evaluation",
+                v2_eval=v2_eval,
+            )
 
             # ==========================================
             # STEP 13: Create signal
@@ -569,12 +907,40 @@ class MarketScanner:
                     f"R:R={new_rr:.2f} (was {risk_reward:.2f})"
                 )
 
+            # Single structured runtime evaluation log per instrument/scan.
+            self._emit_smc_v2_eval_log(
+                instrument=canonical_instrument,
+                smc_analysis=smc_analysis,
+                confidence=confidence_result.confidence_score,
+                min_conf_required=self._get_min_conf_required_for_grade(smc_analysis.setup_grade),
+                within_killzone=v2_eval.gates.get("within_killzone"),
+                htf_poi_gate=v2_eval.gates.get("htf_poi_gate"),
+                htf_range_position=v2_eval.details.get("htf_range_position"),
+                sweep_valid=v2_eval.gates.get("sweep_valid"),
+                fvgs_valid_strict=v2_eval.details.get("strict_fvg_count"),
+                fvg_in_poi=(v2_eval.details.get("fvg_in_htf_poi_count", 0) > 0),
+                rr=signal.risk_reward,
+                min_rr_required=v2_eval.details.get("min_rr_required"),
+                sl_value=sl,
+                sl_cap_max=v2_eval.details.get("sl_cap_max"),
+                sl_cap_pass=v2_eval.gates.get("sl_cap_pass"),
+                allow_live_trade=v2_eval.allow_trade,
+                block_reason=(v2_eval.reason if not v2_eval.allow_trade else None),
+                stage="FINAL_EVAL",
+                block_reasons=v2_eval.details.get("block_reasons"),
+            )
+
             logger.info(
                 f"SIGNAL: {instrument} {direction} "
                 f"grade={smc_analysis.setup_grade} "
                 f"conf={confidence_result.confidence_score}% "
                 f"R:R={signal.risk_reward:.2f}"
                 f"{' [LIMIT]' if signal.use_limit_entry else ''}"
+            )
+            self._explain(
+                instrument,
+                f"Signal created: {direction}, confidence={confidence_result.confidence_score}%, R:R={signal.risk_reward:.2f}.",
+                "Send signal to AutoExecutor -> AI validation -> execute only if approved and risk gates pass."
             )
 
             # Log signal
@@ -595,10 +961,10 @@ class MarketScanner:
                     "fvg_count": len(smc_analysis.fvgs),
                     "ob_count": len(smc_analysis.order_blocks),
                     "premium_discount": smc_analysis.premium_discount.get("zone") if smc_analysis.premium_discount else None,
-                    "entry_price": entry_price,
+                    "entry_price": signal.entry_price,
                     "stop_loss": sl,
                     "take_profit": tp,
-                    "risk_reward": risk_reward,
+                    "risk_reward": signal.risk_reward,
                     "grade_reasons": smc_analysis.grade_reasons,
                     "bull_case": confidence_result.bull_case,
                     "bear_case": confidence_result.bear_case,
@@ -623,10 +989,10 @@ class MarketScanner:
                 "instrument": instrument,
                 "direction": direction,
                 "confidence": confidence_result.confidence_score,
-                "entry_price": entry_price,
+                "entry_price": signal.entry_price,
                 "stop_loss": sl,
                 "take_profit": tp,
-                "risk_reward": risk_reward,
+                "risk_reward": signal.risk_reward,
                 "executed": 0,
                 "skip_reason": None,
                 "trade_id": None,
@@ -640,6 +1006,11 @@ class MarketScanner:
             )
 
         except MT5Error as e:
+            self._explain(
+                instrument,
+                f"MT5 data/execution layer failed: {e}",
+                "Retry on next cycle after reconnect and symbol/data check."
+            )
             db.log_activity({
                 "activity_type": "ERROR",
                 "instrument": instrument,
@@ -653,6 +1024,11 @@ class MarketScanner:
             )
         except Exception as e:
             logger.exception(f"Scan error for {instrument}")
+            self._explain(
+                instrument,
+                f"Unhandled scan exception: {e}",
+                "Capture error, skip this cycle, and retry on next scheduled scan."
+            )
             db.log_activity({
                 "activity_type": "ERROR",
                 "instrument": instrument,
@@ -669,6 +1045,47 @@ class MarketScanner:
     # Helper methods
     # ==========================================
 
+    def _smc_skip_details(
+        self,
+        smc_analysis: Optional[SMCAnalysis],
+        extra: Optional[dict] = None,
+        eval_details: Optional[dict] = None,
+        gates: Optional[dict] = None,
+    ) -> dict:
+        """Build consistent context payload for SMC-stage skip reasons."""
+        if not smc_analysis:
+            payload = extra or {}
+            if eval_details:
+                payload["eval_details"] = eval_details
+            if gates:
+                payload["gates"] = gates
+            return payload
+
+        details = {
+            "smc_grade": smc_analysis.setup_grade,
+            "direction": smc_analysis.direction,
+            "htf_bias": smc_analysis.htf_bias,
+            "htf_structure": smc_analysis.htf_structure,
+            "htf_swing_high": smc_analysis.htf_swing_high,
+            "htf_swing_low": smc_analysis.htf_swing_low,
+            "current_price": smc_analysis.current_price,
+            "has_sweep": bool(smc_analysis.sweep_detected),
+            "has_choch": bool(smc_analysis.ltf_choch),
+            "has_bos": bool(smc_analysis.ltf_bos),
+            "has_displacement": bool(smc_analysis.ltf_displacement),
+            "risk_reward": smc_analysis.risk_reward,
+            "fvgs_detected": len(smc_analysis.fvgs),
+        }
+        if smc_analysis.sweep_detected:
+            details["sweep"] = smc_analysis.sweep_detected.to_dict()
+        if extra:
+            details.update(extra)
+        if eval_details:
+            details["eval_details"] = eval_details
+        if gates:
+            details["gates"] = gates
+        return details
+
     def _skip(
         self,
         instrument: str,
@@ -677,19 +1094,191 @@ class MarketScanner:
         details: dict = None
     ) -> ScanResult:
         """Create a skip result with logging."""
+        details = details or {}
+        gates = details.get("gates", {}) if isinstance(details.get("gates"), dict) else {}
+        within_killzone_value = gates.get("within_killzone")
+        if within_killzone_value is None:
+            skip_profile = get_profile(instrument)
+            within_killzone_value, _ = self._is_in_killzone_for_instrument(skip_profile)
+        sweep_info = details.get("sweep") if isinstance(details.get("sweep"), dict) else {}
+        sweep_dir = str(sweep_info.get("sweep_direction", "")).upper()
+        sweep_side = (
+            "buyside" if sweep_dir == "BUYSIDE_SWEEP"
+            else "sellside" if sweep_dir == "SELLSIDE_SWEEP"
+            else "none"
+        )
+        candidate_direction = (
+            "SHORT" if sweep_dir == "BUYSIDE_SWEEP"
+            else "LONG" if sweep_dir == "SELLSIDE_SWEEP"
+            else "NONE"
+        )
+        setup_grade = details.get("smc_grade") or "NO_TRADE"
+        smc_stub = SimpleNamespace(
+            setup_grade=setup_grade,
+            direction=details.get("direction"),
+            sweep_detected=SimpleNamespace(sweep_direction=sweep_dir) if sweep_dir else None,
+            ltf_choch=SimpleNamespace() if details.get("has_choch") else None,
+            ltf_bos=SimpleNamespace() if details.get("has_bos") else None,
+            ltf_displacement=SimpleNamespace() if details.get("has_displacement") else None,
+            fvgs=[object()] * int(details.get("fvg_count", details.get("fvgs_detected", 0)) or 0),
+            htf_swing_high=details.get("htf_swing_high", 0.0),
+            htf_swing_low=details.get("htf_swing_low", 0.0),
+            current_price=details.get("current_price", 0.0),
+        )
+        eval_details = details.get("eval_details", {}) or {}
+        htf_range_position = eval_details.get("htf_range_position")
+        htf_poi_gate = gates.get("htf_poi_gate")
+        if htf_poi_gate is None:
+            fallback_direction_hint = details.get("direction")
+            if not fallback_direction_hint and candidate_direction != "NONE":
+                fallback_direction_hint = candidate_direction
+            htf_poi_gate, htf_range_position_fallback, htf_reason = self._compute_htf_range_and_poi_gate(
+                smc_analysis=smc_stub,
+                direction_hint=fallback_direction_hint,
+            )
+            if htf_range_position is None:
+                htf_range_position = htf_range_position_fallback
+            if htf_poi_gate is None:
+                htf_poi_gate = False
+                if htf_reason:
+                    details.setdefault("eval_details", {})
+                    details["eval_details"]["htf_poi_data_reason"] = htf_reason
+        strict_fvg_count = eval_details.get("strict_fvg_count")
+        if strict_fvg_count is None:
+            strict_fvg_count = 0
+        self._emit_smc_v2_eval_log(
+            instrument=instrument,
+            smc_analysis=smc_stub,
+            confidence=details.get("confidence"),
+            min_conf_required=self._get_min_conf_required_for_grade(setup_grade),
+            within_killzone=within_killzone_value,
+            htf_poi_gate=htf_poi_gate,
+            htf_range_position=htf_range_position,
+            sweep_valid=gates.get("sweep_valid", details.get("has_sweep")),
+            fvgs_valid_strict=strict_fvg_count,
+            fvg_in_poi=(eval_details.get("fvg_in_htf_poi_count", 0) > 0),
+            rr=details.get("risk_reward"),
+            min_rr_required=eval_details.get("min_rr_required", self._get_min_rr_required_for_grade(setup_grade)),
+            sl_value=details.get("stop_loss"),
+            sl_cap_max=eval_details.get("sl_cap_max"),
+            sl_cap_pass=gates.get("sl_cap_pass"),
+            allow_live_trade=False,
+            block_reason=reason,
+            stage="FINAL_EVAL",
+            block_reasons=[reason],
+            eval_overrides={
+                "candidate_direction": candidate_direction,
+                "sweep_side": sweep_side,
+            },
+        )
+        self._explain(instrument, reason, self._next_step_from_reason(reason))
         db.log_activity({
             "activity_type": "SIGNAL_REJECTED",
             "instrument": instrument,
             "decision": "SKIP",
             "reasoning": reason,
-            "details": details or {},
+            "details": details,
         })
+        self._run_ai_shadow_for_skip(
+            instrument=instrument,
+            reason=reason,
+            details=details,
+        )
+        self._log_setup_label_if_enabled(
+            instrument=instrument,
+            direction=details.get("direction"),
+            setup_grade=details.get("smc_grade"),
+            confidence=details.get("confidence"),
+            risk_reward=details.get("risk_reward"),
+            reason=reason,
+            details=details,
+        )
         return ScanResult(
             instrument=instrument,
             has_signal=False,
             skip_reason=reason,
             scan_duration_ms=self._get_duration_ms(start_time),
         )
+
+    def _run_ai_shadow_for_skip(self, instrument: str, reason: str, details: Optional[dict] = None) -> None:
+        """
+        Scanner-level AI shadow review for skipped setups (no trade signal generated).
+        """
+        details = details or {}
+        if not self.config.should_use_ai_validation():
+            return
+        if not getattr(self.config.ai_validation, "shadow_on_skip", False):
+            return
+
+        # Throttle to control API usage.
+        cooldown_seconds = max(0, int(getattr(self.config.ai_validation, "shadow_cooldown_seconds", 45)))
+        now = datetime.now(timezone.utc)
+        if self._last_ai_shadow_at and cooldown_seconds > 0:
+            elapsed = (now - self._last_ai_shadow_at).total_seconds()
+            if elapsed < cooldown_seconds:
+                return
+
+        # Only meaningful skip reasons.
+        shadow_reasons = (
+            "No CHoCH or BOS on LTF",
+            "No clear SMC direction",
+            "HTF bias NEUTRAL",
+            "Outside trading session",
+            "Spread too high",
+            "R:R ",
+            "Filter:",
+        )
+        if not any(token in reason for token in shadow_reasons):
+            return
+
+        self._last_ai_shadow_at = now
+        try:
+            signal_data = {
+                "instrument": instrument,
+                "direction": details.get("direction") or "NONE",
+                "confidence": details.get("confidence") or 0,
+                "entry_price": details.get("entry_price") or 0,
+                "stop_loss": details.get("stop_loss") or 0,
+                "take_profit": details.get("take_profit") or 0,
+                "risk_reward": details.get("risk_reward") or 0,
+                "technical": {
+                    "trend": details.get("trend", "N/A"),
+                    "rsi": details.get("rsi", 0),
+                    "macd_trend": details.get("macd_trend", "N/A"),
+                    "atr_pips": details.get("atr_pips", 0),
+                },
+                "sentiment": details.get("sentiment", 0),
+                "bull_case": f"Scanner skip reason: {reason}",
+                "bear_case": f"Scanner skip reason: {reason}",
+                "smc": {
+                    "setup_grade": details.get("smc_grade", "NO_TRADE"),
+                    "htf_bias": details.get("htf_bias"),
+                    "htf_structure": details.get("htf_structure"),
+                    "direction": details.get("direction"),
+                    "risk_reward": details.get("risk_reward"),
+                    "fvgs_detected": details.get("fvgs_detected", details.get("fvg_count", 0)),
+                    "has_sweep": details.get("has_sweep"),
+                    "has_choch": details.get("has_choch"),
+                    "has_bos": details.get("has_bos"),
+                },
+            }
+            result = self.llm_engine.validate_signal(signal_data)
+            if result is None:
+                logger.info(
+                    f"AI_LAYER | SCANNER_SHADOW | instrument={instrument} "
+                    f"skip_reason=\"{reason}\" ai_status=FAILED"
+                )
+                return
+
+            compact_reasoning = " ".join(str(result.reasoning).split())
+            logger.info(
+                f"AI_LAYER | SCANNER_SHADOW | instrument={instrument} "
+                f"skip_reason=\"{reason}\" ai_decision={result.decision} model={result.model} "
+                f"latency_ms={result.latency_ms} conf_adj={result.confidence_adjustment} "
+                f"reasoning=\"{compact_reasoning}\""
+            )
+        except Exception as e:
+            logger.warning(f"AI_LAYER | SCANNER_SHADOW | instrument={instrument} error={e}")
 
     def _check_spread(self, price: dict, instrument: str) -> bool:
         """Check if spread is acceptable."""
@@ -718,6 +1307,242 @@ class MarketScanner:
 
         return True, "OK"
 
+    def _get_effective_min_rr(self, profile: dict, setup_grade: str) -> float:
+        """Resolve active RR threshold (profile or SMC v2 grade-based override)."""
+        rr = float(profile.get("target_rr", self.config.scalping.target_rr))
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if (
+            smc_v2
+            and smc_v2.enabled
+            and smc_v2.grade_execution.enabled
+            and setup_grade in ("A+", "A")
+        ):
+            rr = float(smc_v2.risk.min_rr.get(setup_grade, rr))
+        return rr
+
+    def _get_min_conf_required_for_grade(self, setup_grade: str) -> Optional[int]:
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if not smc_v2:
+            return None
+        if setup_grade == "A+":
+            return int(smc_v2.grade_execution.min_confidence_a_plus)
+        if setup_grade == "A":
+            return int(smc_v2.grade_execution.min_confidence_a)
+        return None
+
+    def _get_min_rr_required_for_grade(self, setup_grade: str) -> Optional[float]:
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if not smc_v2 or not smc_v2.enabled:
+            return None
+        rr_map = smc_v2.risk.min_rr or {}
+        if setup_grade in rr_map:
+            return float(rr_map[setup_grade])
+        return None
+
+    def _requires_live_hard_gates(self, instrument: str) -> bool:
+        """
+        Enable hard live gates (within_killzone + htf_poi_gate) for XAU and GBP instruments.
+        """
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if not smc_v2 or not smc_v2.enabled or not smc_v2.grade_execution.enabled:
+            return False
+        if not getattr(smc_v2.grade_execution, "enforce_live_hard_gates", True):
+            return False
+        symbol = instrument.upper()
+        return ("XAU" in symbol) or ("GBP" in symbol)
+
+    def _apply_smc_v2_sl_caps(
+        self,
+        instrument: str,
+        entry_price: float,
+        stop_loss: float,
+        direction: str,
+    ) -> tuple[float, Optional[str], dict]:
+        """
+        Apply SMC v2 SL normalization:
+        - clamp to min cap
+        - block if above max cap
+        """
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if not smc_v2 or not smc_v2.enabled:
+            return stop_loss, None, {}
+
+        distance = abs(entry_price - stop_loss)
+        details = {}
+
+        if "XAU" in instrument.upper():
+            # Standardized XAU units: 1 point = 0.01 price.
+            points = distance / 0.01
+            min_points = float(smc_v2.risk.xau_sl_caps.get("min_points", 120))
+            max_points = float(smc_v2.risk.xau_sl_caps.get("max_points", 450))
+            details.update({
+                "sl_distance_points_before": round(points, 2),
+                "sl_cap_min_points": min_points,
+                "sl_cap_max_points": max_points,
+            })
+            if points > max_points:
+                return stop_loss, f"SL cap exceeded: {points:.1f} points > {max_points:.1f}", details
+            if points < min_points:
+                adj = min_points * 0.01
+                stop_loss = entry_price - adj if direction == "LONG" else entry_price + adj
+                details["sl_clamped_min_points"] = min_points
+            return stop_loss, None, details
+
+        if "JPY" in instrument.upper():
+            pip_value = 0.01
+        else:
+            pip_value = 0.0001
+        pips = distance / pip_value if pip_value > 0 else 0.0
+        min_pips = float(smc_v2.risk.fx_sl_caps.get("min_pips", 4.0))
+        max_pips = float(smc_v2.risk.fx_sl_caps.get("max_pips", 18.0))
+        details.update({
+            "sl_distance_pips_before": round(pips, 2),
+            "sl_cap_min_pips": min_pips,
+            "sl_cap_max_pips": max_pips,
+        })
+        if pips > max_pips:
+            return stop_loss, f"SL cap exceeded: {pips:.1f} pips > {max_pips:.1f}", details
+        if pips < min_pips:
+            adj = min_pips * pip_value
+            stop_loss = entry_price - adj if direction == "LONG" else entry_price + adj
+            details["sl_clamped_min_pips"] = min_pips
+        return stop_loss, None, details
+
+    def _candidate_direction_from_sweep(self, smc_analysis: Optional[SMCAnalysis]) -> str:
+        if not smc_analysis or not smc_analysis.sweep_detected:
+            return "NONE"
+        side = smc_analysis.sweep_detected.sweep_direction
+        if side == "SELLSIDE_SWEEP":
+            return "LONG"
+        if side == "BUYSIDE_SWEEP":
+            return "SHORT"
+        return "NONE"
+
+    def _sweep_side_label(self, smc_analysis: Optional[SMCAnalysis]) -> str:
+        if not smc_analysis or not smc_analysis.sweep_detected:
+            return "none"
+        side = smc_analysis.sweep_detected.sweep_direction
+        if side == "BUYSIDE_SWEEP":
+            return "buyside"
+        if side == "SELLSIDE_SWEEP":
+            return "sellside"
+        return "none"
+
+    def _fmt_bool(self, value: Optional[bool]) -> str:
+        if value is None:
+            return "NONE"
+        return "true" if bool(value) else "false"
+
+    def _fmt_num(self, value: Optional[Any], precision: int = 2) -> str:
+        if value is None:
+            return "NONE"
+        if isinstance(value, (int, float)):
+            return f"{float(value):.{precision}f}"
+        return str(value)
+
+    def _compute_htf_range_and_poi_gate(
+        self,
+        smc_analysis: Optional[SMCAnalysis],
+        direction_hint: Optional[str] = None,
+    ) -> tuple[Optional[bool], Optional[float], Optional[str]]:
+        """
+        Compute HTF range position and POI gate from runtime values.
+        Returns: (htf_poi_gate, htf_range_position, reason_if_missing_or_invalid)
+        """
+        if not smc_analysis:
+            return None, None, "HTF_POI_DATA_MISSING"
+
+        htf_low = float(getattr(smc_analysis, "htf_swing_low", 0.0) or 0.0)
+        htf_high = float(getattr(smc_analysis, "htf_swing_high", 0.0) or 0.0)
+        current_price = float(getattr(smc_analysis, "current_price", 0.0) or 0.0)
+        if htf_high <= htf_low or current_price <= 0:
+            return None, None, "HTF_POI_DATA_MISSING"
+
+        range_pos = (current_price - htf_low) / (htf_high - htf_low)
+        direction = (smc_analysis.direction or direction_hint or "").upper()
+        if direction == "SHORT":
+            return range_pos >= 0.75, range_pos, None
+        if direction == "LONG":
+            return range_pos <= 0.25, range_pos, None
+        return False, range_pos, "HTF_POI_DIRECTION_MISSING"
+
+    def _emit_smc_v2_eval_log(
+        self,
+        instrument: str,
+        smc_analysis: Optional[SMCAnalysis],
+        confidence: Optional[int],
+        min_conf_required: Optional[int],
+        within_killzone: Optional[bool],
+        htf_poi_gate: Optional[bool],
+        htf_range_position: Optional[float],
+        sweep_valid: Optional[bool],
+        fvgs_valid_strict: Optional[int],
+        fvg_in_poi: Optional[bool],
+        rr: Optional[float],
+        min_rr_required: Optional[float],
+        sl_value: Optional[float],
+        sl_cap_max: Optional[float],
+        sl_cap_pass: Optional[bool],
+        allow_live_trade: Optional[bool],
+        block_reason: Optional[str],
+        stage: str = "FINAL_EVAL",
+        block_reasons: Optional[List[str]] = None,
+        eval_overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Emit strict runtime validation output per requested external format."""
+        setup_grade = smc_analysis.setup_grade if smc_analysis else "NO_TRADE"
+        confirmed_direction = smc_analysis.direction if (smc_analysis and smc_analysis.direction) else "NONE"
+        candidate_direction = self._candidate_direction_from_sweep(smc_analysis)
+        sweep_side = self._sweep_side_label(smc_analysis)
+        choch = bool(smc_analysis and smc_analysis.ltf_choch)
+        bos = bool(smc_analysis and smc_analysis.ltf_bos)
+        displacement = bool(smc_analysis and smc_analysis.ltf_displacement)
+        fvgs_detected = len(smc_analysis.fvgs) if smc_analysis else 0
+        reasons = [r for r in (block_reasons or []) if r]
+        reason_primary = block_reason or (reasons[0] if reasons else None)
+        reason_text = reason_primary if reason_primary else "NONE"
+        reason_list_text = "|".join(reasons) if reasons else "NONE"
+        if eval_overrides:
+            setup_grade = eval_overrides.get("setup_grade", setup_grade)
+            confirmed_direction = eval_overrides.get("confirmed_direction", confirmed_direction)
+            candidate_direction = eval_overrides.get("candidate_direction", candidate_direction)
+            sweep_side = eval_overrides.get("sweep_side", sweep_side)
+            choch = bool(eval_overrides.get("choch", choch))
+            bos = bool(eval_overrides.get("bos", bos))
+            displacement = bool(eval_overrides.get("displacement", displacement))
+            fvgs_detected = int(eval_overrides.get("fvgs_detected", fvgs_detected))
+
+        logger.info(
+            f"SMC_V2_EVAL | {instrument} | "
+            f"stage={stage}, "
+            f"smc_v2_enabled={self._fmt_bool(getattr(self.config.smc_v2, 'enabled', False))}, "
+            f"grade_exec_enabled={self._fmt_bool(getattr(self.config.smc_v2.grade_execution, 'enabled', False))}, "
+            f"within_killzone={self._fmt_bool(within_killzone)}, "
+            f"htf_poi_gate={self._fmt_bool(htf_poi_gate)}, "
+            f"htf_range_position={self._fmt_num(htf_range_position, 2)}, "
+            f"sweep_valid={self._fmt_bool(sweep_valid)}, "
+            f"sweep_side={sweep_side}, "
+            f"choch={self._fmt_bool(choch)}, "
+            f"bos={self._fmt_bool(bos)}, "
+            f"candidate_direction={candidate_direction}, "
+            f"confirmed_direction={confirmed_direction}, "
+            f"displacement={self._fmt_bool(displacement)}, "
+            f"fvgs_detected={fvgs_detected}, "
+            f"fvgs_valid_strict={int(fvgs_valid_strict) if fvgs_valid_strict is not None else 'NONE'}, "
+            f"fvg_in_poi={self._fmt_bool(fvg_in_poi)}, "
+            f"rr={self._fmt_num(rr, 2)}, "
+            f"min_rr_required={self._fmt_num(min_rr_required, 2)}, "
+            f"sl_value={self._fmt_num(sl_value, 5)}, "
+            f"sl_cap_max={self._fmt_num(sl_cap_max, 2)}, "
+            f"sl_cap_pass={self._fmt_bool(sl_cap_pass)}, "
+            f"setup_grade={setup_grade}, "
+            f"confidence={int(confidence) if confidence is not None else 'NONE'}, "
+            f"min_conf_required={int(min_conf_required) if min_conf_required is not None else 'NONE'}, "
+            f"allow_live_trade={self._fmt_bool(allow_live_trade)}, "
+            f"block_reason_primary={reason_text}, "
+            f"block_reasons={reason_list_text}"
+        )
+
     def _is_in_killzone(self) -> tuple:
         """Check if current time is in a high-probability killzone."""
         hour = datetime.now(timezone.utc).hour
@@ -728,6 +1553,297 @@ class MarketScanner:
         if 15 <= hour < 17:
             return True, "LONDON_CLOSE"
         return False, ""
+
+    def _is_in_killzone_for_instrument(self, profile: dict) -> tuple[bool, str]:
+        """Check killzone using profile killzones and global time windows."""
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if smc_v2 and getattr(getattr(smc_v2, "killzone_gate", None), "always_true", False):
+            return True, "ALWAYS_TRUE_OVERRIDE"
+        in_kz, kz_name = self._is_in_killzone()
+        if not in_kz:
+            return False, ""
+        allowed = profile.get("killzones", [])
+        if not allowed:
+            return in_kz, kz_name
+        return kz_name in allowed, kz_name
+
+    def _next_high_impact_news_minutes(self, instrument: str) -> Optional[int]:
+        """Return minutes until next high-impact event for instrument, if any."""
+        try:
+            events = news_filter.get_upcoming_events(instrument, hours_ahead=4)
+            high_events = [
+                e for e in events
+                if str(e.get("impact", "")).upper() == "HIGH"
+            ]
+            if not high_events:
+                return None
+            mins = [int(e.get("minutes_until", 9999)) for e in high_events]
+            return min(mins) if mins else None
+        except Exception:
+            return None
+
+    def _evaluate_setup_v2(
+        self,
+        instrument: str,
+        profile: dict,
+        smc_analysis: SMCAnalysis,
+        technical: TechnicalAnalysis,
+        confidence: int,
+        entry_price: float,
+        stop_loss: float,
+        risk_reward: float,
+    ) -> SMCv2Evaluation:
+        """Evaluate v2 gates in shadow mode (no execution impact in phase 2)."""
+        cfg = getattr(self.config, "smc_v2", None)
+        if not cfg or not cfg.enabled:
+            return SMCv2Evaluation(setup_grade=smc_analysis.setup_grade, allow_trade=False, reason="SMC v2 disabled")
+
+        grade = smc_analysis.setup_grade or "NO_TRADE"
+        direction = smc_analysis.direction
+        min_rr_map = cfg.risk.min_rr or {}
+        min_rr = float(min_rr_map.get(grade, min_rr_map.get("A", 2.5)))
+        force_live_hard_gates = self._requires_live_hard_gates(instrument)
+
+        gates: Dict[str, Optional[bool]] = {
+            "within_killzone": None,
+            "news_clear": None,
+            "htf_poi_gate": None,
+            "sweep_valid": None,
+            "fvg_valid": None,
+            "direction_confirmed": bool(direction),
+            "choch_or_bos": bool(smc_analysis.ltf_choch or smc_analysis.ltf_bos),
+            "rr_pass": risk_reward >= min_rr,
+            "sl_cap_pass": None,
+        }
+
+        if cfg.killzone_gate.enabled or force_live_hard_gates:
+            kz_ok, kz_name = self._is_in_killzone_for_instrument(profile)
+            gates["within_killzone"] = kz_ok
+        else:
+            kz_name = ""
+
+        if cfg.news_gate.enabled:
+            next_news_min = self._next_high_impact_news_minutes(instrument)
+            gates["news_clear"] = (next_news_min is None or next_news_min > cfg.news_gate.block_minutes)
+        else:
+            next_news_min = None
+
+        range_pos = None
+        poi_data_reason = None
+        if cfg.htf_poi_gate.enabled or force_live_hard_gates:
+            poi_gate, range_pos, poi_data_reason = self._compute_htf_range_and_poi_gate(
+                smc_analysis=smc_analysis,
+                direction_hint=direction,
+            )
+            gates["htf_poi_gate"] = bool(poi_gate) if poi_gate is not None else False
+
+        if cfg.strict_sweep.enabled:
+            gates["sweep_valid"] = bool(
+                smc_analysis.sweep_detected and smc_analysis.sweep_detected.reversal_confirmed
+            )
+        else:
+            gates["sweep_valid"] = bool(smc_analysis.sweep_detected)
+
+        # Strict FVG filter:
+        # valid if gap >= 1.2*ATR_M5, aligns with displacement leg and HTF bias
+        atr_price = (technical.atr_pips or 0.0) * self._pip_value_for_instrument(instrument)
+        valid_fvgs = []
+        fvg_in_htf_poi = 0
+        for fvg in smc_analysis.fvgs:
+            if fvg.filled:
+                continue
+            gap_ok = (atr_price > 0 and fvg.size >= 1.2 * atr_price)
+            displacement_ok = bool(
+                smc_analysis.ltf_displacement and
+                smc_analysis.ltf_displacement.direction == fvg.direction
+            )
+            htf_align_ok = (
+                (smc_analysis.htf_bias == "BULLISH" and fvg.direction == "BULLISH") or
+                (smc_analysis.htf_bias == "BEARISH" and fvg.direction == "BEARISH")
+            )
+            if gap_ok and displacement_ok and htf_align_ok:
+                valid_fvgs.append(fvg)
+                zone = (smc_analysis.premium_discount or {}).get("zone")
+                if (
+                    (direction == "LONG" and zone == "DISCOUNT") or
+                    (direction == "SHORT" and zone == "PREMIUM")
+                ):
+                    fvg_in_htf_poi += 1
+        gates["fvg_valid"] = len(valid_fvgs) > 0 if cfg.strict_fvg.enabled else True
+
+        sl_distance = abs(entry_price - stop_loss)
+        if "XAU" in instrument:
+            points = sl_distance / 0.01
+            min_points = float(cfg.risk.xau_sl_caps.get("min_points", 120))
+            max_points = float(cfg.risk.xau_sl_caps.get("max_points", 450))
+            sl_cap_pass = points <= max_points
+            sl_metric = {"sl_distance_points": round(points, 1), "sl_cap_min": min_points, "sl_cap_max": max_points}
+        elif "_" in instrument or "/" in instrument:
+            if "JPY" in instrument:
+                pip_value = 0.01
+            else:
+                pip_value = 0.0001
+            pips = sl_distance / pip_value if pip_value > 0 else 0.0
+            min_pips = float(cfg.risk.fx_sl_caps.get("min_pips", 4.0))
+            max_pips = float(cfg.risk.fx_sl_caps.get("max_pips", 18.0))
+            sl_cap_pass = pips <= max_pips
+            sl_metric = {"sl_distance_pips": round(pips, 1), "sl_cap_min": min_pips, "sl_cap_max": max_pips}
+        else:
+            sl_cap_pass = True
+            sl_metric = {}
+        gates["sl_cap_pass"] = sl_cap_pass
+
+        allow_trade = True
+        blockers: List[str] = []
+
+        if cfg.grade_execution.enabled and grade not in ("A+", "A"):
+            allow_trade = False
+            blockers.append(f"grade={grade} not live-eligible")
+
+        for gate_name, gate_ok in gates.items():
+            if gate_ok is False:
+                allow_trade = False
+                blockers.append(gate_name)
+        if poi_data_reason:
+            allow_trade = False
+            blockers.append(poi_data_reason)
+
+        if cfg.grade_execution.enabled:
+            if grade == "A+" and confidence < cfg.grade_execution.min_confidence_a_plus:
+                allow_trade = False
+                blockers.append("confidence_below_a_plus_threshold")
+            elif grade == "A" and confidence < cfg.grade_execution.min_confidence_a:
+                allow_trade = False
+                blockers.append("confidence_below_a_threshold")
+            if grade == "A" and cfg.grade_execution.a_plus_only_live:
+                allow_trade = False
+                blockers.append("a_plus_only_live_mode")
+        else:
+            min_conf = cfg.grade_execution.min_confidence_a_plus if grade == "A+" else cfg.grade_execution.min_confidence_a
+            if grade in ("A+", "A") and confidence < min_conf:
+                allow_trade = False
+                blockers.append("confidence_below_grade_threshold")
+
+        reason = "ALLOW" if allow_trade else "; ".join(blockers)[:300]
+        confidence_bonus = 0.0
+        if smc_analysis.sweep_detected and smc_analysis.sweep_detected.reversal_confirmed and smc_analysis.ltf_displacement:
+            confidence_bonus += 0.05
+        if fvg_in_htf_poi > 0:
+            confidence_bonus += 0.05
+        details = {
+            "grade": grade,
+            "confidence": confidence,
+            "min_rr_required": min_rr,
+            "risk_reward": round(risk_reward, 2),
+            "killzone_name": kz_name,
+            "next_high_impact_news_min": next_news_min,
+            "htf_range_position": round(range_pos, 3) if isinstance(range_pos, float) else None,
+            "atr_price": atr_price,
+            "strict_fvg_count": len(valid_fvgs),
+            "fvg_in_htf_poi_count": fvg_in_htf_poi,
+            "confidence_bonus": round(confidence_bonus, 2),
+            "block_reasons": blockers,
+            "htf_poi_data_reason": poi_data_reason,
+            "shadow_mode": cfg.shadow_mode,
+            **sl_metric,
+        }
+        return SMCv2Evaluation(
+            setup_grade=grade,
+            allow_trade=allow_trade,
+            reason=reason,
+            gates=gates,
+            details=details,
+        )
+
+    def _log_setup_label_if_enabled(
+        self,
+        instrument: str,
+        direction: Optional[str],
+        setup_grade: Optional[str],
+        confidence: Optional[int],
+        risk_reward: Optional[float],
+        reason: str,
+        details: Optional[dict] = None,
+        v2_eval: Optional[SMCv2Evaluation] = None,
+    ) -> None:
+        """Persist setup label rows when SMC v2 shadow mode is enabled."""
+        cfg = getattr(self.config, "smc_v2", None)
+        if not cfg or not cfg.enabled or not cfg.shadow_mode:
+            return
+
+        gates = (v2_eval.gates if v2_eval else {})
+        if not gates and isinstance(details, dict):
+            # Backfill gates from skip payload when v2_eval isn't available.
+            details_gates = details.get("gates")
+            if isinstance(details_gates, dict):
+                gates = details_gates
+            else:
+                eval_details = details.get("eval_details")
+                if isinstance(eval_details, dict):
+                    nested = eval_details.get("gates")
+                    if isinstance(nested, dict):
+                        gates = nested
+        def _json_safe(value):
+            if isinstance(value, dict):
+                return {str(k): _json_safe(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_json_safe(v) for v in value]
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if hasattr(value, "item"):
+                try:
+                    return value.item()
+                except Exception:
+                    return str(value)
+            return value
+
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "instrument": instrument,
+            "direction": direction,
+            "setup_grade": (v2_eval.setup_grade if v2_eval else setup_grade) or "NO_TRADE",
+            "confidence": confidence,
+            "risk_reward": risk_reward,
+            "allow_trade": bool(v2_eval.allow_trade) if v2_eval else False,
+            "within_killzone": gates.get("within_killzone"),
+            "news_clear": gates.get("news_clear"),
+            "htf_poi_gate": gates.get("htf_poi_gate"),
+            "sweep_valid": gates.get("sweep_valid"),
+            "fvg_valid": gates.get("fvg_valid"),
+            "direction_confirmed": gates.get("direction_confirmed"),
+            "choch_or_bos": gates.get("choch_or_bos"),
+            "rr_pass": gates.get("rr_pass"),
+            "sl_cap_pass": gates.get("sl_cap_pass"),
+            "reason": (v2_eval.reason if v2_eval else reason)[:300],
+            "details": {
+                "scanner_reason": reason,
+                "gates": _json_safe(gates),
+                "eval_details": _json_safe(v2_eval.details if v2_eval else {}),
+                "raw_details": _json_safe(details or {}),
+            },
+        }
+        try:
+            db.log_setup_label(payload)
+            db.log_activity({
+                "activity_type": "SMC_V2_SHADOW",
+                "instrument": instrument,
+                "direction": direction,
+                "decision": "ALLOW" if payload["allow_trade"] else "BLOCK",
+                "reasoning": payload["reason"],
+                "details": payload["details"],
+            })
+        except Exception as e:
+            logger.warning(f"Failed to log SMC v2 setup label: {e}")
+
+    def _pip_value_for_instrument(self, instrument: str) -> float:
+        """Return pip size for converting ATR pips into price distance."""
+        if "XAU" in instrument:
+            return 0.1
+        if "JPY" in instrument:
+            return 0.01
+        if "BTC" in instrument or "ETH" in instrument:
+            return 1.0
+        return 0.0001
 
     def _calculate_sl_tp_fallback(
         self,

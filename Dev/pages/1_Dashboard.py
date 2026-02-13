@@ -56,6 +56,15 @@ def render_auto_trading_status():
             pnl = auto_stats.get("auto_pnl", 0)
             st.metric("Auto P/L", f"{pnl:+.2f}")
 
+        shadow = db.get_smc_v2_shadow_stats(hours=24)
+        if shadow.get("total", 0) > 0:
+            st.caption(
+                f"SMC v2 shadow (24h): eval={shadow.get('total', 0)} | "
+                f"allow={shadow.get('allow_count', 0)} | "
+                f"block={shadow.get('block_count', 0)} | "
+                f"allow_rate={shadow.get('allow_rate', 0.0):.1f}%"
+            )
+
     except Exception:
         pass
 

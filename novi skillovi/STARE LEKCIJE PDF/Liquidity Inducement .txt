@@ -1,0 +1,153 @@
+=== Page 2 ===
+2.ŠTO JE TO LIQUIDITY INDUCEMENT?
+BOSBOS
+INDUCEMENT ($)
+INDUCEMENT ($)
+FVGDEMAND ZONALiquidity inducement odnosi se na namjerno
+kretanje cijene koje izaziva retail tradere da
+zauzmu pozicije u krivom smjeru.
+Cijena stvara prividnu reakciju i kreće se u
+“željenom smjeru” retail tradera, izazivajući ih da
+postave ordere u tom području.
+Cilj ovih manipulacija cijene je privući što više
+ordera u područja likvidnosti kako bi institucije
+mogle iskoristiti te naloge i “očistiti” likvidnost za
+pokretanje tržišta u suprotnom smjeru.
+
+=== Page 3 ===
+3.Liquidity inducement zapravo služi kao “fake
+pullback” za rane Buyere i rane Sellere. 
+Jednom kada su rani Buyeri i rani Selleri
+izbačeni iz trejda i njihova likvidnost
+pokupljena, tek tada zapravo kreće pravi
+pokret prema gore ili dolje oviso o trendu.
+Prepoznavanje liquidity inducement-a
+omogućuje traderima da izbjegnu
+uobičajene manipulacije i postave se na
+pravu stranu tržišta.
+FVG
+SUPPLY ZONAINDUCEMENT ($)
+INDUCEMENT ($)
+BOS
+BOSŠTO JE TO LIQUIDITY INDUCEMENT?
+
+=== Page 4 ===
+4.$$BOS
+INDUCEMENT ($)
+DEMAND ZONAGDJE SE NALAZI LIQUIDITY INDUCEMENT?
+Bullish PrimjerLiquidity Inducement nalazi se iznad Demand zona.
+Može se pojavljivati u sljedećim oblicima:
+Swing Low 
+formacijaDouble Bottom
+PatternTrendline
+Liquidity
+
+=== Page 5 ===
+5.
+Trend je Bullish, imamo BOS (break
+strukture) od prethodnog High-a sa
+lijeve strane.
+Očekujemo nastavak Bullish trenda.
+Možemo vidjeti Demand zonu koja
+ima FVG kao i Liquidity inducement
+iznad sebe.
+Čekamo da cijena očisti likvidnost i
+reagira od FVG / Demand zone.PRIJE:
+Cijena je uspješno očistila svu
+likvidnost i Stop Loss-ove ispod ovog
+inducement-a.
+Nakon toga, cijena ulazi u Demand
+zonu i od tu se agresivno isporučuje
+prema Take Profit zoni.POSLIJE:
+
+=== Page 6 ===
+6.$
+GDJE SE NALAZI LIQUIDITY INDUCEMENT?
+Bearish PrimjerLiquidity Inducement nalazi se ispod Supply zona.
+Može se pojavljivati u sljedećim oblicima:
+SUPPLY ZONA
+INDUCEMENT ($)
+Swing High
+formacijaDouble Top
+PatternTrendline
+LiquidityBOS
+
+=== Page 7 ===
+7.Trend je promijenjen iz Bullish u Bearish, imamo MSS
+(Market Structure Shift) od Higher Low-a sa lijeve strane.
+Očekujemo nastavak Bearish trenda i shortove.
+Cijena je iza sebe ostavila Supply zonu koja ima FVG kao
+i Liquidity inducement u obliku trendlinije ispod sebe.
+Čekamo da cijena očisti likvidnost i reagira od FVG /
+Supply zone.PRIJE:
+Cijena je uspješno očistila svu likvidnost i Stop Loss-ove
+iznad ove trendlinije.
+Nakon toga, cijena ulazi u Supply zonu i od tu se
+agresivno isporučuje prema Take Profit zoni.POSLIJE:
+MSS
+MSS
+
+=== Page 8 ===
+8.
+Inducement ($)
+Inducement ($)
+ODABIR NAJBOLJEG PD ARRAY-A ZA TRADE
+Na sljedećim primjerima možemo vidjeti 2 Demand i 2 Supply zone, međutim, kako se odlučiti koja zona je “jača” i
+kvalitetnija za ulazak u trade?
+U većini slučajeva, kvalitetnija zona će uvijek biti zona koja ima inducement iznad / ispod sebe. U primjerima ispod, to su
+“extreme” odnosno zadnje zone koje se nalaze dublje u Premium / Discount zonama.
+Ovo ne mora uvijek biti slučaj, ali ovo možete koristiti kao dodatnu konfirmaciju pri traženju svojih trade setup-ova.KAKO ODABRATI NAJBOLJU ZONU ZA ULAZAK U TRADE?
+Bearish Primjer Bullish Primjer
+
+=== Page 9 ===
+9.LIQUIDITY SW EEP + INDUCEMENT
+Bullish Inducement sa 
+Swing Low formacijom 
+Bullish Inducement sa 
+Double Bottom patternomBullish Inducement sa 
+Trendline patternomINDUCEMENT ($)INDUCEMENT ($)
+INDUCEMENT ($)
+SWEEP (X)SWEEP (X)
+SWEEP (X)
+DEMAND ZONADEMAND ZONA
+DEMAND ZONABOSBOS
+BOS
+
+=== Page 10 ===
+10.LIQUIDITY SW EEP + INDUCEMENT
+Bearish Inducement sa 
+Swing High formacijom 
+Bearish Inducement sa 
+Double Top patternomBearish Inducement sa 
+Trendline patternomSUPPLY ZONA
+SUPPLY ZONA SUPPLY ZONASWEEP (X)
+SWEEP (X) SWEEP (X)
+BOSBOS
+BOSINDUCEMENT ($)
+INDUCEMENT ($)
+INDUCEMENT ($)
+
+=== Page 11 ===
+11.MSSBOS
+INDUCEMENT ($)SWEEP (X)
+DEMAND ZONA
+LIQUIDITY SW EEP + INDUCEMENT
+- PRIMJER
+Bullish PrimjerPRIJE:
+POSLIJE:MSS
+MSS
+
+=== Page 12 ===
+12.BOS
+INDUCEMENT ($)SWEEP (X)SUPPLY ZONAMSS
+MSS
+Bearish PrimjerPRIJE:
+POSLIJE:LIQUIDITY SW EEP + INDUCEMENT
+- PRIMJER
+
+=== Page 13 ===
+13.LIQUIDITY INDUCEMENT - BONUS PRIMJERI
+Primjer #1 - Sweep + Inducement + FVG
+Primjer #3 - Sweep + MSS 
++ Inducement + Demand zonaPrimjer #4 - Sweep + MSS 
++ Inducement + Supply zonaPrimjer #2 - MSS + Inducement + FVG

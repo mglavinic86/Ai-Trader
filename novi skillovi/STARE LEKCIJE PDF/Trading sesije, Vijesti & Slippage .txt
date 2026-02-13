@@ -1,0 +1,278 @@
+=== Page 2 ===
+ŠTO SU TRADING SESIJE 
+I KOJA JE NJIHOVA VAŽNOST?
+Forex trading sesije su vremenski periodi tokom kojih su
+određena financijska tržišta širom svijeta otvorena za
+trgovanje.
+Forex tržište je otvoreno 24 sata dnevno, pet dana u
+tjednu, ali se ne trguje istim intezitetom tokom cijelog
+dana. Ovo je zbog različitih vremenskih zona i radnog
+vremena glavnih financijskih centara širom svijeta.
+Razumijevanje kada određene valute imaju najveću
+volatilnost pomaže traderima da biraju najbolje vrijeme
+za trgovanje.
+Razumijevanje Forex trading sesija ključno je za uspijeh
+na tržištu, jer omogućava bolje planiranje i donošenje
+informiranih odluka.
+2.
+
+=== Page 3 ===
+KOJE TRADING SESIJE POSTOJE?
+AZIJSKA 
+SESIJA
+TOKYO SYDNEY
+FRANKFURT
+ LONDON
+ NEW YORK
+3.
+
+=== Page 4 ===
+AZIJSKA SESIJA
+Azijska sesija sastoji se od 2 glavne sesije, a to su Sydney i Tokyo. 
+TOKYO
+ SYDNEY
+Vrijeme sesije:
+23:00 - 08:00*Vrijeme sesije:
+01:00 - 09:00*
+Prva sesija dana,
+ s umjerenom volatilnošću.Ovo je ključna sesija za valutne parove
+povezane s azijskim tržištem.
+Fokus je na valutama poput AUD (australski
+dolar) i NZD (novozelandski dolar).Najaktivnije su azijske valute poput JPY
+(japanski jen).
+Na EUR i USD parovima uglavnom je jako
+slaba volatilnost te je poznata po
+akumuliranju (konsolidiranju), odnosno
+stvaranju likvidnosti.
+*Sva vremena sesija pisana su po našem vremenu.Na EUR i USD parovima uglavnom je jako
+slaba volatilnost te je poznata po
+akumuliranju (konsolidiranju), odnosno
+stvaranju likvidnosti.
+4.
+
+=== Page 5 ===
+KAKO JA KORISTIM 
+AZIJSKU SESIJU KAO LIQUIDITY?
+BEARISH PRIMJERSUPPLY
+AZIJSKA SESIJA$$$$
+DEMAND
+BULLISH PRIMJERAZIJSKA SESIJA
+$$
+$$
+5.
+
+=== Page 6 ===
+AZIJA KAO LIQUIDITY
+- BULLISH PRIMJERI
+Primjer #1 Primjer #2
+6.
+
+=== Page 7 ===
+AZIJA KAO LIQUIDITY 
+- BEARISH PRIMJERI
+Primjer #1 Primjer #2
+7.
+
+=== Page 8 ===
+AZIJSKA SESIJA 
+- PRIMJERI USD/EUR/GBP PAROVI
+AZIJA
+Primjer #1 Primjer #2Slaba volatilnost / malo volumena
+Bez većih pokreta na tržištu
+Akumuliranje cijene u jako
+malom range-uGLAVNE KARAKTERISTIKE:
+8.
+
+=== Page 9 ===
+AZIJSKA SESIJA - PRIMJERI AUD/JPY
+Primjer #1 Primjer #2Može biti pogodna za trejdanje
+azijskih parova poput AUD/NZD/JPY
+Veći volumen i volatilnost nego na
+europskim / američkim parovimaGLAVNE KARAKTERISTIKE:
+9.
+
+=== Page 10 ===
+AZIJSKA SESIJA - PRIMJERI NZD/JPY
+Primjer #1 Primjer #2Može biti pogodna za trejdanje
+azijskih parova poput AUD/NZD/JPY
+Veći volumen i volatilnost nego na
+europskim / američkim parovimaGLAVNE KARAKTERISTIKE:
+10.
+
+=== Page 11 ===
+FRANKFURT I LONDON SESIJE
+Vrijeme sesije:
+08:00 - 17:00*Vrijeme sesije:
+09:00 - 18:00*
+Druga najveća europska sesija iza Londonske,
+ali kreće 1h prije samog Londona.Londonska sesija najlikvidnija je i najaktivnija
+sesija zbog velikog broja europskih trgovaca.
+Najaktivniji su parovi poput EUR/USD i
+GBP/USD, odnosno svi parovi koji sadrže
+europske valute.Najaktivniji su parovi poput EUR/USD i
+GBP/USD, odnosno svi parovi koji sadrže
+europske valute.
+Poznata po tome da formira 
+High ili Low of the Day.Poznata po tome da formira 
+High ili Low of the Day.
+FRANKFURT
+ LONDON
+*Sva vremena sesija pisana su po našem vremenu.
+11.
+
+=== Page 12 ===
+NEW  YORK SESIJA
+NEW YORKVrijeme sesije: 14:00 - 23:00*
+Volatilnost je izrazito visoka, osobito u razdoblju
+preklapanja s londonskom sesijom.
+Fokus je na američkom dolaru (USD) i svim
+parovima koji su u direktnom odnosu s USD, kao npr.
+EUR/USD, GBP/USD, USD/CAD, USD/JPY i sl. 
+New York sesija poznata je po tzv. kontinuaciji
+odnosno nastavku trenda London sesije, ili
+kompletnom reversalu odnosno preokretu trenda.
+*Sva vremena sesija pisana su po našem vremenu.
+12.
+
+=== Page 13 ===
+SESSION KILLZONE 
+Postoje 2 perioda u danu kada je volatilnost na vrhuncu i
+tada je najbolje tražiti trading setup-ove. 
+London Killzone: 08:00 - 11:00h
+New York KIllzone: 13:00 - 16:00h
+LONDON
+KILLZONENEW  YORK
+KILLZONE
+13.
+
+=== Page 14 ===
+TRADINGVIEW  
+INDIKATOR ZA SESIJE
+“FXN - Asian Session Range” je indikator kojeg osobno koristim kako bi na jednostavan način
+vizualno prikazao sve trading sesije na svom TradingView chartu. 
+Potrebno je samo prilagoditi postavke indikatora prema vlastitoj vremenskoj zoni, odnosno
+vremenima napisanim u ovom PDF-u za našu vremensku zonu.
+14.
+
+=== Page 15 ===
+VIJESTI
+Ekonomske vijesti su temeljni pokretači kretanja cijena na forex tržištu
+jer odražavaju ekonomsko zdravlje određene zemlje. 
+Ključne objave, poput izvješća o kamatnim stopama, inflaciji, zaposlenosti
+ili BDP-u, mogu uzrokovati nagle promjene u vrijednosti valuta. 
+Na primjer, pozitivan ekonomski izvještaj, poput rasta zaposlenosti, 
+može ojačati valutu, dok negativni podaci mogu dovesti do njenog
+pada.
+Osim redovitih objava, nepredvidivi događaji, poput političkih
+previranja, prirodnih katastrofa ili iznenadnih promjena monetarne
+politike, također značajno utječu na tržište.
+Za tradere, praćenje i razumijevanje ovih vijesti ključno je 
+za planiranje strategija i smanjenje rizika. 
+Preporučeno je izbjegavati trejdanje neposredno prije i poslije
+važnih objava zbog povećane volatilnosti (5-10 minuta prije i poslije).
+15.
+
+=== Page 16 ===
+NAJVOLATILNIJE VIJESTI ZA IZBJEGAVATI
+Tijelo američke centralne
+banke (FED) koje donosi
+odluke o monetarnoj politici,
+uključujući kamatne stope.
+Njihove izjave i odluke snažno
+utječu na američki dolar i
+globalna financijska tržišta.
+Traderi prate FOMC sastanke i
+izjave zbog mogućih naznaka
+promjene u monetarnoj
+politici.FOMC 
+(Federal Open Market Committee)
+Mjesečno izvješće o broju novih
+radnih mjesta u SAD-u (bez
+poljoprivrednog sektora).
+Snažan pokazatelj ekonomske
+aktivnosti i tržišta rada, s
+velikim utjecajem na USD.
+Često izaziva značajnu
+volatilnost na forex tržištu jer
+signalizira stanje američkog
+gospodarstva.Pokazatelj inflacije koji mjeri
+promjene u cijenama robe i
+usluga na maloprodajnoj razini.
+Ključan je za procjenu hoće li
+centralna banka mijenjati
+kamatne stope.
+Povećana inflacija često dovodi
+do jačanja valute zbog
+očekivanja viših kamatnih
+stopa.NFP 
+(Non-Farm Payrolls)CPI 
+(Consumer Price Index)
+16.
+
+=== Page 17 ===
+KAKO  PR ATITI VIJESTI I EKONOMSKE DOGAĐAJE?
+Forex Factory Economic Calendar popularan je alat za praćenje ekonomskih vijesti i
+događaja koji utječu na financijska tržišta.
+Prikazuje točne datume i vremena objava ekonomskih vijesti.
+Označava važnost vijesti pomoću boja (žuta, narančasta, crvena) prema njihovom
+potencijalnom utjecaju na tržište.
+Sadrži podatke o prethodnim, očekivanim i stvarnim vrijednostima objava.
+Omogućuje traderima planiranje svojih strategija prema
+nadolazećim događajima.
+Pomaže u prepoznavanju vremena kada će tržište biti
+volatilno.
+Koristi se za donošenje informiranih odluka i upravljanje
+rizikom u forex tradingu.
+Stranica je besplatna, jednostavna za korištenje i
+prilagodljiva prema potrebama korisnika.
+Primjer High Impact News 
+(Red Folder News)
+17.
+
+=== Page 18 ===
+SLIPPAGE
+Ti si postavio svoj 
+buy order ovdje.
+Tvoja pozicija je 
+otvorena tek ovdje.Cijena padne vrlo naglo i
+impulzivno istog trenutka
+kada si ti pokušao otvoriti
+svoju poziciju. 
+Prema tome, tvoja pozicija
+će biti izvršena na sljedećoj
+dostupnoj cijeni. Slippage označava razliku između očekivane cijene po
+kojoj trader želi izvršiti trade i stvarne cijene po kojoj je
+trade zapravo izvršen.
+Najčešće se javlja tijekom razdoblja visoke volatilnosti
+(npr. kod važnih ekonomskih vijesti) ili kada na tržištu
+nema dovoljno likvidnosti.
+Izbjegavajte trejdanje tijekom velikih objava vijesti ili
+ekstremne volatilnosti.
+Kada stvarni podaci značajno odstupaju od očekivanih,
+tržište reagira brzo i često ekstremno, što dovodi do
+velikih promjena cijena.
+Tijekom takvih događaja tehnička analiza često postaje
+nepouzdana jer tržište reagira na temelju emocija i
+fundamentalnih podataka.
+U nekim slučajevima, čak ni postavljen Stop Loss vam neće
+biti respektiran, već ćete otići u puno veći gubitak nego
+što ste planirali.
+18.
+
+=== Page 19 ===
+ZAKLJUČAK
+Forex trading sesije imaju jedinstvene karakteristike koje utječu na
+volatilnost i likvidnost tržišta na određene parove u određeno vrijeme.
+Razumijevanje tih razlika pomaže nam kao traderima odabrati najbolje
+vrijeme za trgovanje i prilagoditi strategije specifičnim uvjetima sesije.
+Ekonomske vijesti i događaji snažno pokreću cijene na tržištu jer reflektiraju
+ekonomsko zdravlje zemalja. Iako nude prilike za profit, visoka volatilnost
+tijekom objava nosi sa sobom značajne rizike. 
+Mi kao traderi trebali bi pažljivo planirati, pratiti ekonomski kalendar i
+izbjegavati trejdanje u nestabilnim razdobljima kako bi zaštitili svoj kapital.
+Slippage predstavlja rizik za forex tradere jer može značajno povećati
+troškove trejdanja i samim time smanjiti profitabilnost, posebno tijekom
+razdoblja niske likvidnosti ili visoke volatilnosti. 
+Kako bi minimizirali šanse za slippage-om, potrebno je izbjegavati trejdanje
+tijekom velikih objava vijesti, ekonomskih događaja ili ekstremne volatilnosti.
+19.

@@ -39,6 +39,7 @@ class SettingsManager:
         self.knowledge_dir = self.settings_dir / "knowledge"
 
         self._config = None
+        self._config_mtime = None
         self._system_prompt = None
         self._skills_cache = {}
         self._knowledge_cache = {}
@@ -52,9 +53,24 @@ class SettingsManager:
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:
                 self._config = json.load(f)
+            self._config_mtime = config_path.stat().st_mtime
         else:
             self._config = {}
+            self._config_mtime = None
             logger.warning("config.json not found, using defaults")
+
+    def _reload_config_if_changed(self) -> None:
+        """Reload config.json only if it changed on disk."""
+        config_path = self.settings_dir / "config.json"
+        if not config_path.exists():
+            return
+        try:
+            current_mtime = config_path.stat().st_mtime
+            if self._config is None or self._config_mtime is None or current_mtime != self._config_mtime:
+                self._load_config()
+                logger.info("Config reloaded from disk")
+        except Exception as e:
+            logger.warning(f"Could not check config changes: {e}")
 
     def get_config(self, key: str = None, default=None):
         """
@@ -67,6 +83,8 @@ class SettingsManager:
         Returns:
             Config value or entire config if key is None
         """
+        self._reload_config_if_changed()
+
         if key is None:
             return self._config
 
@@ -221,6 +239,7 @@ class SettingsManager:
     def reload(self) -> None:
         """Reload all settings from disk."""
         self._config = None
+        self._config_mtime = None
         self._system_prompt = None
         self._skills_cache = {}
         self._knowledge_cache = {}

@@ -60,7 +60,7 @@
     "sessions": ["12-21"]
   },
   "XAU_USD": {
-    "max_spread_pips": 30,
+    "max_spread_pips": 120,
     "min_atr_pips": 100,
     "sessions": ["07-17", "12-21"],
     "allow_weekends": false,
@@ -72,7 +72,7 @@
     "limit_entry_midpoint": false
   },
   "XAUUSD": {
-    "max_spread_pips": 30,
+    "max_spread_pips": 120,
     "min_atr_pips": 100,
     "sessions": ["07-17", "12-21"],
     "allow_weekends": false,

@@ -271,16 +271,54 @@ class AutoTradingService:
         scan_start = datetime.now(timezone.utc)
 
         try:
+            # Fast close-sync: keep dashboard/DB in near real-time sync with MT5.
+            try:
+                mt5_positions = self.client.get_positions() if self.client else []
+                sync_result = db.sync_trades_with_mt5(
+                    mt5_positions,
+                    mt5_history=[],
+                    mt5_client=self.client,
+                )
+                if sync_result.get("closed"):
+                    logger.info(
+                        f"Realtime trade sync: closed {len(sync_result.get('closed', []))} trade(s), "
+                        f"with P/L for {sync_result.get('closed_with_pnl', 0)}, "
+                        f"reconciled {sync_result.get('reconciled', 0)}"
+                    )
+            except Exception as e:
+                logger.warning(f"Realtime trade sync failed: {e}")
+
             # Check pending limit order status before scanning
             if self.executor._pending_orders:
                 pending_events = self.executor.check_pending_orders()
                 for event in pending_events:
                     if event["type"] == "FILLED":
                         self._status.trades_executed_today += 1
+                        self._status.last_execution_time = datetime.now(timezone.utc)
                         heartbeat_manager.increment_trades()
                         logger.info(f"Pending order filled: {event['instrument']} {event['direction']}")
+                        try:
+                            db.update_auto_signal_result(
+                                instrument=event["instrument"],
+                                direction=event["direction"],
+                                executed=True,
+                                skip_reason=None,
+                                trade_id=event.get("trade_id"),
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to update auto_signal for filled pending order: {e}")
                     elif event["type"] == "EXPIRED":
                         logger.info(f"Pending order expired: {event['instrument']} {event['direction']}")
+                        try:
+                            db.update_auto_signal_result(
+                                instrument=event["instrument"],
+                                direction=event["direction"],
+                                executed=False,
+                                skip_reason="Pending limit order expired",
+                                trade_id=None,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to update auto_signal for expired pending order: {e}")
 
             # Scan all instruments
             signals = self.scanner.scan_all_instruments()
@@ -470,7 +508,7 @@ class AutoTradingService:
             logger.info("Running position sync and learning...")
 
             # Sync closed trades from MT5
-            result = sync_mt5_history(days=1)
+            result = sync_mt5_history(days=1, client=self.client)
             if result.get("trades_analyzed", 0) > 0:
                 logger.info(f"Learned from {result['trades_analyzed']} newly closed trades")
 
@@ -620,7 +658,8 @@ class AutoTradingService:
                 "scan_interval": self.config.scan_interval_seconds,
                 "risk_per_trade": self.config.risk_per_trade_percent,
                 "min_confidence": self.config.min_confidence_threshold,
-                "dry_run": self.config.dry_run
+                "dry_run": self.config.dry_run,
+                "smc_v2_enabled": self.config.smc_v2.enabled if hasattr(self.config, "smc_v2") else False
             }
         }
 

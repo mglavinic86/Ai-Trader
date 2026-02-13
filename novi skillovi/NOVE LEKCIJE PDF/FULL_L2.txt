@@ -1,0 +1,128 @@
+=P1=
+                     Privatni Mentorship - Lekcija 2
+by LukaFXTrading
+
+=P2=
+PD ARRAYS
+
+=P3=
+Fair Value Gap
+Inversion Fair Value Gap
+Order Block
+Breaker Block
+Mitigation Block
+Rejection Block
+Balance Price Range
+
+=P4=
+ Fair Value Gap 
+Bullish Fair Value Gap - BISI ³ Buy side inefficiency sell side imbalance
+
+=P5=
+
+=P6=
+
+=P7=
+ Fair Value Gap 
+Bearish Fair Value Gap - SIBI ³ Sell side inefficiency buy side imbalance
+
+=P8=
+
+=P9=
+
+=P10=
+Inversion Fair Value Gap
+
+=P11=
+
+=P12=
+Bullish Inversion Fair Value Gap
+
+=P13=
+
+=P14=
+Bearish Inversion Fair Value Gap
+
+=P15=
+
+=P16=
+ Order Block 
+Bearish Order Block
+Predstavlja zadnju ili viae bullish svijeɎa gdje je trЃiate naglo krenulo prema dole (displacement).
+
+=P17=
+ Order Block 
+
+=P18=
+
+=P19=
+
+=P20=
+ Order Block 
+Bullish Order Block
+Predstavlja zadnju ili viae bearish svijeɎa gdje je trЃiate naglo krenulo prema gore (displacement).
+
+=P21=
+ Order Block 
+
+=P22=
+
+=P23=
+
+=P24=
+ Breaker Block 
+Bearish Breaker Block
+Bearish breaker je stari bullish order block koji je probijen prema dole,  ime se invalidira kao zona kupnje i postaje zona 
+prodaje.  esto se koristi kao reversal zona. 
+
+=P25=
+Breaker Block 
+
+=P26=
+ Breaker Block 
+Bullish Breaker Block
+Bullish breaker je stari bearish order block koji je probijen prema gore,  ime se invalidira kao zona prodaje i postaje zona 
+kupnje.  esto se koristi kao reversal zona.
+
+=P27=
+Breaker Block 
+
+=P28=
+ Mitigation Block 
+Bearish Mitigation Block
+Bearish mitigation block je stari bearish order block koji je probijen prema dole i koji nije pokupio liquidity,  ime se invalidira 
+kao zona kupnja i postaje zona prodaje.  esto se koristi kao reversal zona.
+
+=P29=
+
+=P30=
+ Mitigation Block 
+Bullish Mitigation Block
+Bulish mitigation block je stari bullish order block koji je probijen prema gore i koji nije pokupio liquidity,  ime se invalidira kao 
+zona prodaje i postaje zona kupnje.  esto se koristi kao reversal zona.
+
+=P31=
+
+=P32=
+Rejection Block 
+Bearish Rejection Block
+Bearish rejection block je zona na kojoj je cijena bila snaЃno odbijena prema dole. Koristi se kao zona prodaje kada se cijena 
+vrati.
+
+=P33=
+
+=P34=
+Rejection Block 
+Bullish Rejection Block
+Bullish rejection block je zona na kojoj je cijena bila snaЃno odbijena prema gore. Koristi se kao zona kupnje kada se cijena 
+vrati.
+
+=P35=
+
+=P36=
+ Balance Price Range 
+Balance Prince Range
+
+=P37=
+
+=P38=

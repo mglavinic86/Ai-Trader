@@ -1,0 +1,32 @@
+Privatni Coaching Program - Lekcija 4
+by LukaFXTrading
+Liquidity
+Osnove Liquidity-a
+Buyside Liquidity 
+Sellside Liquidity
+Vrste Liquidity-a
+Orderflow i Liquidity
+Postoje 2 vrste Liquidity-a:
+1. Buyside Liquidity
+2. Sellside Liquidity
+Buyside Liquidity
+Sellside Liquidity
+Previous Month High (PMH)
+1.
+Previous Month Low (PML)
+1.
+2. Previous Week High (PWH)
+2. Previous Week Low (PWL)
+3. Previous Day High (PDH)
+3. Previous Day Low (PDL)
+4. Previous Session High (PSH)
+4. Previous Session Low (PSL)
+5. Azija High 
+5. Azija Low
+Previous Month Low / High (PML - PMH)
+Previous Week Low (PWL)
+Previous Day High (PDH)
+Azija High / Low 
+London High / Low
+ Manji timeframe orderflow ³ Manji timeframe liquidity
+  VeɎi timeframe orderflow ³ VeɎi timeframe liquidity

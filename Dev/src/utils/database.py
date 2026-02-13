@@ -31,6 +31,12 @@ _dev_dir = Path(__file__).parent.parent.parent
 _db_path = _dev_dir / "data" / "trades.db"
 
 
+def _to_int_or_none(value):
+    if value is None:
+        return None
+    return 1 if bool(value) else 0
+
+
 class Database:
     """SQLite database manager for AI Trader."""
 
@@ -214,9 +220,39 @@ class Database:
                 )
             """)
 
+            # SMC v2 setup labels (shadow/live evaluation telemetry)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS setup_labels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    instrument TEXT NOT NULL,
+                    direction TEXT,
+                    setup_grade TEXT,
+                    confidence INTEGER,
+                    risk_reward REAL,
+                    allow_trade INTEGER DEFAULT 0,
+                    within_killzone INTEGER,
+                    news_clear INTEGER,
+                    htf_poi_gate INTEGER,
+                    sweep_valid INTEGER,
+                    fvg_valid INTEGER,
+                    direction_confirmed INTEGER,
+                    choch_or_bos INTEGER,
+                    rr_pass INTEGER,
+                    sl_cap_pass INTEGER,
+                    reason TEXT,
+                    details TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Add trade_source column to trades if not exists
             try:
                 cursor.execute("ALTER TABLE trades ADD COLUMN trade_source TEXT DEFAULT 'MANUAL'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE setup_labels ADD COLUMN fvg_valid INTEGER")
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -489,6 +525,9 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_scanner_time ON scanner_stats(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_time ON auto_signals(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_instrument ON auto_signals(instrument)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_setup_labels_time ON setup_labels(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_setup_labels_instrument ON setup_labels(instrument)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_setup_labels_grade ON setup_labels(setup_grade)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_log(activity_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_instrument ON activity_log(instrument)")
@@ -643,32 +682,70 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_daily_pnl(self) -> float:
-        """Get total P/L for today."""
-        today = datetime.now().strftime("%Y-%m-%d")
+    def get_daily_pnl(self, auto_only: bool = False) -> float:
+        """
+        Get realized P/L for today.
+
+        Args:
+            auto_only: If True, include only AUTO_* trade sources.
+        """
         with self._connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE closed_at LIKE ?",
-                (f"{today}%",)
-            )
+            base_sql = """
+                SELECT COALESCE(SUM(pnl), 0)
+                FROM trades
+                WHERE status = 'CLOSED'
+                  AND pnl IS NOT NULL
+                  AND close_reason != 'SYNC_CLOSED_PENDING_RECON'
+                  AND DATE(REPLACE(SUBSTR(COALESCE(closed_at, timestamp), 1, 19), 'T', ' ')) = DATE('now', 'localtime')
+            """
+            if auto_only:
+                base_sql += " AND COALESCE(trade_source, 'MANUAL') LIKE 'AUTO_%'"
+            cursor.execute(base_sql)
             result = cursor.fetchone()
             return float(result[0]) if result else 0.0
 
-    def get_weekly_pnl(self) -> float:
-        """Get total P/L for the current week (Monday to now)."""
-        today = datetime.now()
-        week_start = today - timedelta(days=today.weekday())
-        week_start_str = week_start.strftime("%Y-%m-%d")
+    def get_weekly_pnl(self, auto_only: bool = False) -> float:
+        """
+        Get realized P/L for current week (Monday local time -> now).
 
+        Args:
+            auto_only: If True, include only AUTO_* trade sources.
+        """
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            base_sql = """
+                SELECT COALESCE(SUM(pnl), 0)
+                FROM trades
+                WHERE status = 'CLOSED'
+                  AND pnl IS NOT NULL
+                  AND close_reason != 'SYNC_CLOSED_PENDING_RECON'
+                  AND DATE(REPLACE(SUBSTR(COALESCE(closed_at, timestamp), 1, 19), 'T', ' ')) >= DATE('now', 'localtime', 'weekday 1', '-7 days')
+            """
+            if auto_only:
+                base_sql += " AND COALESCE(trade_source, 'MANUAL') LIKE 'AUTO_%'"
+            cursor.execute(base_sql)
+            result = cursor.fetchone()
+            return float(result[0]) if result else 0.0
+
+    def get_pending_recon_count(self, days: int = 7) -> int:
+        """Count closed trades waiting for MT5 reconciliation (no confirmed P/L yet)."""
+        cutoff = datetime.now() - timedelta(days=days)
         with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE closed_at >= ?",
-                (week_start_str,)
+                """
+                SELECT COUNT(*)
+                FROM trades
+                WHERE status = 'CLOSED'
+                  AND pnl IS NULL
+                  AND close_reason = 'SYNC_CLOSED_PENDING_RECON'
+                  AND COALESCE(closed_at, timestamp) >= ?
+                """,
+                (cutoff.isoformat(),),
             )
-            result = cursor.fetchone()
-            return float(result[0]) if result else 0.0
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
 
     # ===================
     # Decision Operations
@@ -948,8 +1025,134 @@ class Database:
             # Check if trade already exists
             existing = self.get_trade(trade_id)
             if existing:
-                results["skipped"] += 1
+                # If trade exists but is still OPEN in DB, update it with MT5 close data.
+                if str(existing.get("status", "")).upper() == "OPEN":
+                    try:
+                        with self._connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                UPDATE trades SET
+                                    status = 'CLOSED',
+                                    exit_price = ?,
+                                    pnl = ?,
+                                    pnl_percent = ?,
+                                    closed_at = ?,
+                                    close_reason = COALESCE(close_reason, 'MT5_SYNC')
+                                WHERE trade_id = ? AND status = 'OPEN'
+                            """, (
+                                trade.get("exit_price"),
+                                trade.get("pnl"),
+                                trade.get("pnl_percent"),
+                                trade.get("closed_at"),
+                                trade_id,
+                            ))
+                        results["imported"] += 1
+                        results["trades_imported"].append(trade_id)
+                        logger.info(
+                            f"Synced close for existing OPEN trade {trade_id}: "
+                            f"{trade.get('instrument')} {trade.get('direction')} P/L: {trade.get('pnl')}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to sync-close existing trade {trade_id}: {e}")
+                        results["errors"] += 1
+                elif (
+                    str(existing.get("status", "")).upper() == "CLOSED"
+                    and str(existing.get("close_reason", "")).upper() in {
+                        "SYNC_CLOSED_NO_PNL",
+                        "SYNC_CLOSED_ESTIMATED_SL",
+                        "SYNC_CLOSED_PENDING_RECON",
+                    }
+                    and trade.get("closed_at")
+                ):
+                    # Reconcile previously closed-without-PnL rows once MT5 history appears.
+                    try:
+                        with self._connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                UPDATE trades SET
+                                    exit_price = ?,
+                                    pnl = ?,
+                                    pnl_percent = ?,
+                                    closed_at = ?,
+                                    close_reason = 'MT5_SYNC_RECON'
+                                WHERE trade_id = ? AND status = 'CLOSED'
+                            """, (
+                                trade.get("exit_price"),
+                                trade.get("pnl"),
+                                trade.get("pnl_percent"),
+                                trade.get("closed_at"),
+                                trade_id,
+                            ))
+                        results["imported"] += 1
+                        results["trades_imported"].append(trade_id)
+                        logger.info(
+                            f"Reconciled previously pending closed trade {trade_id} with MT5 P/L: {trade.get('pnl')}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to reconcile pending trade {trade_id}: {e}")
+                        results["errors"] += 1
+                else:
+                    results["skipped"] += 1
                 continue
+
+            # Fallback match when MT5 history uses a different identifier than local trade_id.
+            # Reconcile pending/no-PnL rows by instrument+direction+time proximity.
+            try:
+                with self._connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT
+                            trade_id,
+                            ABS(strftime('%s', COALESCE(closed_at, timestamp)) - strftime('%s', ?)) AS delta_sec
+                        FROM trades
+                        WHERE status = 'CLOSED'
+                          AND pnl IS NULL
+                          AND instrument = ?
+                          AND direction = ?
+                          AND close_reason IN ('SYNC_CLOSED_NO_PNL', 'SYNC_CLOSED_ESTIMATED_SL', 'SYNC_CLOSED_PENDING_RECON')
+                        ORDER BY delta_sec ASC
+                        LIMIT 1
+                        """,
+                        (
+                            trade.get("closed_at") or trade.get("opened_at") or datetime.now().isoformat(),
+                            trade.get("instrument"),
+                            trade.get("direction"),
+                        ),
+                    )
+                    pending_match = cursor.fetchone()
+                    if pending_match and int(pending_match[1] or 10**9) <= 12 * 3600:
+                        matched_trade_id = pending_match[0]
+                        cursor.execute(
+                            """
+                            UPDATE trades SET
+                                exit_price = ?,
+                                pnl = ?,
+                                pnl_percent = ?,
+                                closed_at = ?,
+                                close_reason = 'MT5_SYNC_RECON',
+                                notes = COALESCE(notes, '') || ?
+                            WHERE trade_id = ? AND status = 'CLOSED'
+                            """,
+                            (
+                                trade.get("exit_price"),
+                                trade.get("pnl"),
+                                trade.get("pnl_percent"),
+                                trade.get("closed_at"),
+                                f" | mt5_trade_id={trade_id}",
+                                matched_trade_id,
+                            ),
+                        )
+                        if cursor.rowcount > 0:
+                            results["imported"] += 1
+                            results["trades_imported"].append(matched_trade_id)
+                            logger.info(
+                                f"Reconciled pending trade {matched_trade_id} "
+                                f"using MT5 trade {trade_id}: P/L {trade.get('pnl')}"
+                            )
+                            continue
+            except Exception as e:
+                logger.warning(f"Pending fallback reconciliation failed for MT5 trade {trade_id}: {e}")
 
             try:
                 with self._connection() as conn:
@@ -1133,6 +1336,38 @@ class Database:
             ))
             return cursor.lastrowid
 
+    def log_setup_label(self, data: dict) -> int:
+        """Log SMC v2 setup evaluation label (used for shadow training/analysis)."""
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO setup_labels (
+                    timestamp, instrument, direction, setup_grade, confidence, risk_reward,
+                    allow_trade, within_killzone, news_clear, htf_poi_gate, sweep_valid, fvg_valid,
+                    direction_confirmed, choch_or_bos, rr_pass, sl_cap_pass, reason, details
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.get("timestamp", datetime.now().isoformat()),
+                data.get("instrument"),
+                data.get("direction"),
+                data.get("setup_grade"),
+                data.get("confidence"),
+                data.get("risk_reward"),
+                int(bool(data.get("allow_trade", False))),
+                _to_int_or_none(data.get("within_killzone")),
+                _to_int_or_none(data.get("news_clear")),
+                _to_int_or_none(data.get("htf_poi_gate")),
+                _to_int_or_none(data.get("sweep_valid")),
+                _to_int_or_none(data.get("fvg_valid")),
+                _to_int_or_none(data.get("direction_confirmed")),
+                _to_int_or_none(data.get("choch_or_bos")),
+                _to_int_or_none(data.get("rr_pass")),
+                _to_int_or_none(data.get("sl_cap_pass")),
+                data.get("reason"),
+                json.dumps(data.get("details", {}))
+            ))
+            return cursor.lastrowid
+
     def update_auto_signal_result(
         self,
         instrument: str,
@@ -1191,7 +1426,7 @@ class Database:
             # Total auto trades
             cursor.execute("""
                 SELECT COUNT(*) FROM trades
-                WHERE trade_source = 'AUTO_SCALPING'
+                WHERE trade_source IN ('AUTO_SCALPING', 'AUTO_SCALPING_LIMIT')
                 AND timestamp >= ?
             """, (cutoff.isoformat(),))
             total_auto_trades = cursor.fetchone()[0]
@@ -1199,7 +1434,7 @@ class Database:
             # Auto trades P/L
             cursor.execute("""
                 SELECT COALESCE(SUM(pnl), 0) FROM trades
-                WHERE trade_source = 'AUTO_SCALPING'
+                WHERE trade_source IN ('AUTO_SCALPING', 'AUTO_SCALPING_LIMIT')
                 AND status = 'CLOSED'
                 AND closed_at >= ?
             """, (cutoff.isoformat(),))
@@ -1228,6 +1463,17 @@ class Database:
             row = cursor.fetchone()
             total_scans = row[0]
             avg_scan_duration = row[1]
+            if total_scans == 0:
+                # Fallback for environments where scanner_stats wasn't historically persisted.
+                cursor.execute("""
+                    SELECT COUNT(*), COALESCE(AVG(duration_ms), 0)
+                    FROM activity_log
+                    WHERE activity_type = 'SCAN_COMPLETE'
+                    AND timestamp >= ?
+                """, (cutoff.isoformat(),))
+                fallback_row = cursor.fetchone()
+                total_scans = fallback_row[0]
+                avg_scan_duration = fallback_row[1]
 
             # Cooldowns
             cursor.execute("""
@@ -1258,6 +1504,184 @@ class Database:
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_smc_v2_shadow_stats(self, hours: int = 24) -> dict:
+        """Get SMC v2 shadow evaluation stats for the last N hours."""
+        cutoff = datetime.now() - timedelta(hours=hours)
+        with self._connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN allow_trade = 1 THEN 1 ELSE 0 END) as allow_count,
+                    SUM(CASE WHEN allow_trade = 0 THEN 1 ELSE 0 END) as block_count
+                FROM setup_labels
+                WHERE timestamp >= ?
+            """, (cutoff.isoformat(),))
+            row = cursor.fetchone()
+            total = row["total"] or 0
+            allow_count = row["allow_count"] or 0
+            block_count = row["block_count"] or 0
+
+            cursor.execute("""
+                SELECT setup_grade, COUNT(*) as cnt
+                FROM setup_labels
+                WHERE timestamp >= ?
+                GROUP BY setup_grade
+                ORDER BY cnt DESC
+            """, (cutoff.isoformat(),))
+            grades = {r["setup_grade"] or "UNKNOWN": r["cnt"] for r in cursor.fetchall()}
+
+            cursor.execute("""
+                SELECT reason, COUNT(*) as cnt
+                FROM setup_labels
+                WHERE timestamp >= ? AND allow_trade = 0
+                GROUP BY reason
+                ORDER BY cnt DESC
+                LIMIT 5
+            """, (cutoff.isoformat(),))
+            top_block_reasons = [{"reason": r["reason"], "count": r["cnt"]} for r in cursor.fetchall()]
+
+            return {
+                "total": total,
+                "allow_count": allow_count,
+                "block_count": block_count,
+                "allow_rate": round((allow_count / total) * 100, 1) if total > 0 else 0.0,
+                "block_rate": round((block_count / total) * 100, 1) if total > 0 else 0.0,
+                "by_grade": grades,
+                "top_block_reasons": top_block_reasons,
+            }
+
+    def get_recent_setup_labels(self, limit: int = 50) -> list[dict]:
+        """Get recent SMC v2 setup labels with parsed details."""
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM setup_labels
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (limit,))
+            rows = []
+            for row in cursor.fetchall():
+                item = dict(row)
+                if item.get("details"):
+                    try:
+                        item["details"] = json.loads(item["details"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                rows.append(item)
+            return rows
+
+    def get_smc_v2_gate_stats(self, hours: int = 24) -> dict:
+        """Get per-gate pass/fail rates for setup_labels."""
+        cutoff = datetime.now() - timedelta(hours=hours)
+        gates = [
+            "within_killzone",
+            "news_clear",
+            "htf_poi_gate",
+            "sweep_valid",
+            "fvg_valid",
+            "direction_confirmed",
+            "choch_or_bos",
+            "rr_pass",
+            "sl_cap_pass",
+        ]
+        results = {
+            g: {"pass_count": 0, "fail_count": 0, "total": 0, "pass_rate": 0.0}
+            for g in gates
+        }
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM setup_labels
+                WHERE timestamp >= ?
+            """, (cutoff.isoformat(),))
+            rows = cursor.fetchall()
+
+            def _coerce_bool_int(v):
+                if v is None:
+                    return None
+                if isinstance(v, bool):
+                    return 1 if v else 0
+                if isinstance(v, (int, float)):
+                    return 1 if int(v) != 0 else 0
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in ("1", "true", "yes"):
+                        return 1
+                    if s in ("0", "false", "no"):
+                        return 0
+                return None
+
+            for row in rows:
+                item = dict(row)
+                details = {}
+                if item.get("details"):
+                    try:
+                        details = json.loads(item["details"]) or {}
+                    except (json.JSONDecodeError, TypeError):
+                        details = {}
+
+                # Backfill gates from payload details when gate columns were null.
+                direct_gates = details.get("gates") if isinstance(details, dict) else {}
+                raw_details = details.get("raw_details") if isinstance(details, dict) else {}
+                nested_gates = {}
+                if isinstance(raw_details, dict):
+                    rg = raw_details.get("gates")
+                    if isinstance(rg, dict):
+                        nested_gates = rg
+
+                for gate in gates:
+                    gate_value = _coerce_bool_int(item.get(gate))
+                    if gate_value is None:
+                        gate_value = _coerce_bool_int(direct_gates.get(gate) if isinstance(direct_gates, dict) else None)
+                    if gate_value is None:
+                        gate_value = _coerce_bool_int(nested_gates.get(gate) if isinstance(nested_gates, dict) else None)
+                    if gate_value is None:
+                        continue
+                    results[gate]["total"] += 1
+                    if gate_value == 1:
+                        results[gate]["pass_count"] += 1
+                    else:
+                        results[gate]["fail_count"] += 1
+
+            for gate in gates:
+                total = results[gate]["total"]
+                pass_count = results[gate]["pass_count"]
+                results[gate]["pass_rate"] = round((pass_count / total) * 100, 1) if total > 0 else 0.0
+        return results
+
+    def get_smc_v2_by_instrument(self, hours: int = 24) -> list[dict]:
+        """Get SMC v2 shadow stats grouped by instrument."""
+        cutoff = datetime.now() - timedelta(hours=hours)
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    instrument,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN allow_trade = 1 THEN 1 ELSE 0 END) as allow_count,
+                    SUM(CASE WHEN allow_trade = 0 THEN 1 ELSE 0 END) as block_count
+                FROM setup_labels
+                WHERE timestamp >= ?
+                GROUP BY instrument
+                ORDER BY total DESC
+            """, (cutoff.isoformat(),))
+            rows = []
+            for row in cursor.fetchall():
+                total = row["total"] or 0
+                allow_count = row["allow_count"] or 0
+                block_count = row["block_count"] or 0
+                rows.append({
+                    "instrument": row["instrument"],
+                    "total": total,
+                    "allow_count": allow_count,
+                    "block_count": block_count,
+                    "allow_rate": round((allow_count / total) * 100, 1) if total > 0 else 0.0,
+                    "block_rate": round((block_count / total) * 100, 1) if total > 0 else 0.0,
+                })
+            return rows
+
     def get_auto_trades_by_instrument(self, days: int = 7) -> dict:
         """Get auto trades grouped by instrument."""
         cutoff = datetime.now() - timedelta(days=days)
@@ -1267,7 +1691,7 @@ class Database:
             cursor.execute("""
                 SELECT instrument, COUNT(*) as count, COALESCE(SUM(pnl), 0) as pnl
                 FROM trades
-                WHERE trade_source = 'AUTO_SCALPING'
+                WHERE trade_source IN ('AUTO_SCALPING', 'AUTO_SCALPING_LIMIT')
                 AND timestamp >= ?
                 GROUP BY instrument
                 ORDER BY count DESC
@@ -1449,7 +1873,12 @@ class Database:
             )
             return cursor.rowcount
 
-    def sync_trades_with_mt5(self, mt5_positions: list[dict], mt5_history: list[dict] = None) -> dict:
+    def sync_trades_with_mt5(
+        self,
+        mt5_positions: list[dict],
+        mt5_history: list[dict] = None,
+        mt5_client=None,
+    ) -> dict:
         """
         Sync stale OPEN trades in DB with actual MT5 positions.
 
@@ -1472,7 +1901,9 @@ class Database:
             "checked": 0,
             "closed": [],
             "closed_with_pnl": 0,
-            "still_open": 0
+            "still_open": 0,
+            "reconciled": 0,
+            "pending_reconciled": 0,
         }
 
         # Get all open trades from DB
@@ -1494,28 +1925,50 @@ class Database:
             if pos.get("instrument"):
                 mt5_instruments.add(pos["instrument"])
 
+        fetched_history = []
         # Build lookup dict from MT5 history for P/L data
         history_lookup = {}
         if mt5_history:
+            fetched_history = list(mt5_history)
             for h in mt5_history:
                 tid = str(h.get("trade_id", ""))
                 if tid:
                     history_lookup[tid] = h
 
-        # If no history provided, try to fetch it
-        if not history_lookup:
+        # If no history provided, try to fetch it.
+        # Prefer caller-provided MT5 client to avoid creating transient clients
+        # that can trigger unnecessary MT5 shutdown/reconnect churn.
+        if mt5_history is None and not history_lookup:
             try:
-                from src.trading.mt5_client import MT5Client
-                client = MT5Client()
+                client = mt5_client
+                if client is None:
+                    from src.trading.mt5_client import MT5Client
+                    client = MT5Client()
                 if client.is_connected():
-                    fetched_history = client.get_history(days=1)
-                    for h in fetched_history:
-                        tid = str(h.get("trade_id", ""))
-                        if tid:
-                            history_lookup[tid] = h
-                    logger.debug(f"Fetched {len(history_lookup)} trades from MT5 history for sync")
+                    for lookback_days in (1, 3, 7, 30):
+                        fetched_history = client.get_history(days=lookback_days)
+                        for h in fetched_history:
+                            tid = str(h.get("trade_id", ""))
+                            if tid:
+                                history_lookup[tid] = h
+                        if history_lookup:
+                            logger.debug(
+                                f"Fetched {len(history_lookup)} trades from MT5 history for sync "
+                                f"(lookback={lookback_days}d)"
+                            )
+                            break
             except Exception as e:
                 logger.warning(f"Could not fetch MT5 history for sync: {e}")
+
+        # Safety guard:
+        # If MT5 returned no open positions and we also have no history to validate closure,
+        # do not force-close DB trades (likely transient connection/data issue).
+        if db_open_trades and not mt5_positions and not history_lookup:
+            logger.warning(
+                "DB sync skipped forced-close: no MT5 positions and no MT5 history available"
+            )
+            results["still_open"] = len(db_open_trades)
+            return results
 
         # Check each DB open trade
         for trade in db_open_trades:
@@ -1570,19 +2023,26 @@ class Database:
                     logger.info(f"Sync-closed trade {trade_id} with P/L: {pnl:.2f} EUR")
                 else:
                     # No history data - close with unknown P/L
+                    # No MT5 close deal data yet -> close as pending reconciliation without guessing P/L.
                     with self._connection() as conn:
                         cursor = conn.cursor()
                         cursor.execute("""
                             UPDATE trades SET
                                 status = 'CLOSED',
+                                pnl = NULL,
+                                pnl_percent = NULL,
                                 closed_at = ?,
-                                close_reason = 'SYNC_CLOSED_NO_PNL'
+                                close_reason = ?
                             WHERE trade_id = ? AND status = 'OPEN'
                         """, (
                             datetime.now().isoformat(),
+                            "SYNC_CLOSED_PENDING_RECON",
                             trade_id
                         ))
-                    logger.warning(f"Sync-closed trade {trade_id} WITHOUT P/L data (not found in MT5 history)")
+                    logger.warning(
+                        f"Sync-closed trade {trade_id} without MT5 history "
+                        f"(reason=SYNC_CLOSED_PENDING_RECON)"
+                    )
 
                 results["closed"].append(trade_id)
             else:
@@ -1591,7 +2051,85 @@ class Database:
         if results["closed"]:
             logger.info(f"DB Sync: Closed {len(results['closed'])} trades ({results['closed_with_pnl']} with P/L data)")
 
+        # Reconcile previously pending-closed trades once MT5 history becomes available.
+        if fetched_history:
+            try:
+                recon = self.sync_from_mt5(fetched_history)
+                results["reconciled"] = int(recon.get("imported", 0) or 0)
+                if results["reconciled"] > 0:
+                    logger.info(f"DB Sync: Reconciled/imported {results['reconciled']} trade(s) from MT5 history")
+            except Exception as e:
+                logger.warning(f"Failed pending-trade reconciliation during sync: {e}")
+
+        # Direct per-position reconciliation for rows still pending P/L.
+        if mt5_client is not None:
+            try:
+                results["pending_reconciled"] = self.reconcile_pending_closed_with_mt5(mt5_client)
+                if results["pending_reconciled"] > 0:
+                    logger.info(f"DB Sync: Reconciled {results['pending_reconciled']} pending trade(s) via position lookup")
+            except Exception as e:
+                logger.warning(f"Pending reconciliation via position lookup failed: {e}")
+
         return results
+
+    def reconcile_pending_closed_with_mt5(self, mt5_client, lookback_days: int = 30, limit: int = 50) -> int:
+        """
+        Reconcile CLOSED trades that have no P/L yet using MT5 position-based lookup.
+        """
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT trade_id
+                FROM trades
+                WHERE status = 'CLOSED'
+                  AND pnl IS NULL
+                  AND close_reason IN ('SYNC_CLOSED_NO_PNL', 'SYNC_CLOSED_ESTIMATED_SL', 'SYNC_CLOSED_PENDING_RECON')
+                ORDER BY datetime(COALESCE(closed_at, timestamp)) DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            pending_ids = [str(row[0]) for row in cursor.fetchall() if row[0] is not None]
+
+        if not pending_ids:
+            return 0
+
+        reconciled = 0
+        for trade_id in pending_ids:
+            try:
+                mt5_trade = mt5_client.get_closed_trade_by_position(trade_id, days=lookback_days)
+                if not mt5_trade:
+                    continue
+                if str(mt5_trade.get("trade_id")) != str(trade_id):
+                    continue
+
+                with self._connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        UPDATE trades SET
+                            exit_price = ?,
+                            pnl = ?,
+                            pnl_percent = ?,
+                            closed_at = ?,
+                            close_reason = 'MT5_SYNC_RECON'
+                        WHERE trade_id = ? AND status = 'CLOSED' AND pnl IS NULL
+                        """,
+                        (
+                            mt5_trade.get("exit_price"),
+                            mt5_trade.get("pnl"),
+                            mt5_trade.get("pnl_percent"),
+                            mt5_trade.get("closed_at"),
+                            trade_id,
+                        ),
+                    )
+                    if cursor.rowcount > 0:
+                        reconciled += 1
+            except Exception as e:
+                logger.debug(f"Pending reconcile failed for trade {trade_id}: {e}")
+
+        return reconciled
 
     # ===================
     # AI Override Operations

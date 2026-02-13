@@ -1,0 +1,166 @@
+=== Page 2 ===
+2.SUPPLY & DEMAND ZONE
+Supply i Demand zone su zone gdje su prodavači
+postali agresivniji od kupaca, ili obrnuto, te svojim
+orderima pogurali cijenu prema dolje ili gore.
+Formiraju se nakon snažnog pada ili rasta cijene, te
+ih najčešće prepoznajemo kao zadnju svjećicu prije
+tog pada ili rasta.
+Koristimo ih kao jedne od ključnih zona odakle cijena
+može potencijalno reagirati, odnosno za ulazak u
+pozicije kao i izlazak iz pozicija.
+Kako bi Supply & Demand zone bile validne, potrebno
+je da cijena prethodno pokupi neku vrstu likvidnosti,
+da cijena probije prethodnu strukturu u marketu
+(MSS), i da ostavi FVG ispod / iznad zone.
+
+=== Page 3 ===
+3.Supply i Demand zone omogućuju traderima prepoznavanje ključnih
+područja na grafu koja imaju visoku vjerojatnost reakcije cijene, čime
+optimiziraju svoje ulaske u trejdove kao i izlaze iz trejdova.SUPPLY & DEMAND ZONE
+Demand 
+Demand 
+Demand 
+Supply
+Supply
+Supply
+
+=== Page 4 ===
+4.KAKO IZGLEDAJU SUPPLY & DEMAND ZONE?
+DEMAND ZONA
+BOS
+BOS
+XXSUPPLY ZONA
+
+
+=== Page 5 ===
+U svim primjerima
+možemo primjetiti kako
+je cijena prethodno
+očistila Liquidity, te
+probila struktura
+marketa (napravila BOS).
+5.PRIMJERI SUPPLY ZONA
+Primjer #1
+Primjer #2 Primjer #3
+
+=== Page 6 ===
+Također, nakon svakog
+BOS-a cijena je za sobom
+ostavila FVG ispod Supply
+Zone što je čini još
+validnijom kao entry zonom.
+6.PRIMJERI SUPPLY ZONA
+Primjer #4Primjer #5
+Primjer #6
+
+=== Page 7 ===
+U svim primjerima
+možemo primjetiti kako
+je cijena prethodno
+očistila Liquidity, te
+probila struktura
+marketa (napravila BOS).
+7.PRIMJERI DEMAND ZONA
+Primjer #1Primjer #2 Primjer #3
+
+=== Page 8 ===
+Također, nakon svakog BOS-a cijena je za sobom ostavila FVG
+iznad Demand Zone što je čini još validnijom kao entry zonom.
+8.PRIMJERI DEMAND ZONA
+Primjer #4 Primjer #5
+
+=== Page 9 ===
+9.
+PREMIUM / DISCOUNT ZONE
+EQUILIBRIUM
+Premium Zona: Područje iznad razine ekvilibrijuma
+(Equilibrium) na grafu, gdje je cijena precijenjena
+(skuplja). Smatra se povoljnom zonom za prodaju.
+Discount Zona: Područje ispod razine
+ekvilibrijuma, gdje je cijena podcijenjena (jeftinija).
+Smatra se povoljnom zonom za kupnju.
+Equilibrium (50% razina):
+Razina u range-u (Swing High do Swing Low) koja
+dijeli područje na Premium i Discount zone.
+Izračunava se povlačenjem Fibonacci retracementa
+od 0% do 100%, gdje je 50% razina ekvilibrijum.
+
+=== Page 10 ===
+10.
+KAKO IZGLEDAJU PREMIUM / DISCOUNT ZONE?
+Primjer Discount zone 
+u Bullish TrenduPrimjer Premium zone 
+u Bearish TrenduPremium & Discount
+zone koristeći Fibonacci
+alat na TradingView-u.
+
+=== Page 11 ===
+11.
+PRIMJERI PREMIUM / DISCOUNT ZONE
+NA CHARTU
+Primjer Discount zone 
+u Bullish TrenduPrimjer Premium zone 
+u Bearish Trendu
+
+=== Page 12 ===
+12.BOS (Break of Structure)
+HH
+LLBOS označava probijanje prethodne strukture u
+marketu, i signalizira nastavak trenda.
+Nakon BOS-a, nastavlja se u istom trendu i cijena
+nastavlja dalje raditi nove Higher Highs (HH) i
+Lower Lows (LL) u istom trendu.
+BOS se koristi na svim timeframe-ovima, od većih
+TF poput Monthly i Weekly, pa sve do
+M1/M5/M15 TF. Treba uzeti u obzir, da su BOS sa
+većih TF mnogo značajniji nego na manjem TF. 
+Koristi se isključivo u kombinaciji sa drugim
+konfirmacijama za najefikasnije rezultate.
+
+=== Page 13 ===
+13.CHOCH (Change of Character)
+CHOCH označava probijanje prethodne
+strukure u marketu, ali za razliku od BOS-a služi
+kao prvi signal potencijalnog preokreta trenda.
+Nakon CHOCH-a, stvara se nova struktura
+marketa (novi Lower Low ili Higher High).
+CHOCH se koristi na svim timeframe-ovima, od
+većih TF poput Monthly i Weekly, pa sve do
+M1/M5/M15 TF. Treba uzeti u obzir, da su
+CHOCH sa većih TF mnogo značajniji nego na
+manjem TF. 
+Koristi se isključivo u kombinaciji sa drugim
+konfirmacijama za najefikasnije rezultate.
+XX
+LLLHHHHH
+HL
+LL
+Neuspjeli pokušaj kreiranja
+novog LL (skupljanje
+likvidnosti prije CHOCH-a)Neuspjeli pokušaj
+kreiranja novog HH
+(skupljanje likvidnosti
+prije CHOCH-a)
+
+=== Page 14 ===
+14.KAKO IZGLEDAJU BOS & CHOCH?
+Primjer prelaska iz Bearish trenda u
+Bullish TrendPrimjer prelaska iz Bullish trenda u
+Bearish TrendBOS
+BOSBOSBOSBOS
+BOS
+BOSBOS
+CHOCH
+CHOCH
+
+=== Page 15 ===
+15.
+BOS & CHOCH - PRIMJER NA CHARTU
+Primjer prelaska iz Bearish trenda u
+Bullish Trend koristeći BOS & CHOCH
+
+=== Page 16 ===
+16.BOS & CHOCH - PRIMJER NA CHARTU
+Primjer prelaska iz Bullish trenda u
+Bearish Trend koristeći BOS & CHOCH

@@ -184,6 +184,39 @@ settings/
 
 ---
 
+## Operations Notes (Current Demo)
+
+- Date: `2026-02-10`
+- Purpose: bootstrap first executable trades on demo while keeping core SMC governance active.
+- Applied settings:
+  - `settings/auto_trading.json` -> `dry_run=false`
+  - `settings/auto_trading.json` -> `ai_validation.enabled=true`
+  - `settings/auto_trading.json` -> `ai_validation.reject_on_failure=false` (demo advisory mode)
+  - `settings/auto_trading.json` -> `smc_v2.risk.min_rr.A+=0.1`
+  - `settings/auto_trading.json` -> `smc_v2.risk.min_rr.A=0.2`
+  - `settings/auto_trading.json` -> `smc_v2.risk.min_rr.B=0.5`
+  - `settings/auto_trading.json` -> `smc_v2.grade_execution.enforce_live_hard_gates=false` (demo)
+  - `settings/auto_trading.json` -> `smc_v2.risk.fx_sl_caps.max_pips=25.0` (demo)
+- Deliberately unchanged:
+  - `smc_v2.enabled=true`
+  - `grade_execution.enabled=true`
+  - `killzone_gate_live=true`
+  - `htf_poi_gate_live=true`
+  - `market_order_fallback_enabled=false`
+- Rationale:
+  - system was structurally valid but repeatedly blocked by RR gate before execution.
+  - AI validation was still rejecting most demo signals using strict RR policy, so it remains enabled but non-blocking during bootstrap.
+- Rollback guidance:
+  - after first 3-5 demo executions, restore `ai_validation.reject_on_failure=true`.
+  - after initial 3-5 demo executions, gradually restore stricter RR (`A+=3.0`, `A=2.5`, `B=2.0`) and keep config snapshots for each change.
+
+- Runtime/dashboard sync updates (2026-02-11):
+  - scanner now writes `scanner_stats` every scan cycle (scan count + average scan duration are live-backed).
+  - `auto_signals` stores post-limit-adjustment `entry_price` and `risk_reward` (matches runtime evaluator values).
+  - pending limit fill/expiry now propagates to `auto_signals` and `trades` (`AUTO_SCALPING_LIMIT`) for accurate metrics.
+
+---
+
 ## Risk Management
 
 **Hard-coded limits that cannot be overridden:**

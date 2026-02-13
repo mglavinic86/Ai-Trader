@@ -1,0 +1,53 @@
+                     Privatni Mentorship - Lekcija 2
+by LukaFXTrading
+PD ARRAYS
+Fair Value Gap
+Inversion Fair Value Gap
+Order Block
+Breaker Block
+Mitigation Block
+Rejection Block
+Balance Price Range
+ Fair Value Gap 
+Bullish Fair Value Gap - BISI ³ Buy side inefficiency sell side imbalance
+ Fair Value Gap 
+Bearish Fair Value Gap - SIBI ³ Sell side inefficiency buy side imbalance
+Inversion Fair Value Gap
+Bullish Inversion Fair Value Gap
+Bearish Inversion Fair Value Gap
+ Order Block 
+Bearish Order Block
+Predstavlja zadnju ili viae bullish svijeɎa gdje je trЃiate naglo krenulo prema dole (displacement).
+ Order Block 
+ Order Block 
+Bullish Order Block
+Predstavlja zadnju ili viae bearish svijeɎa gdje je trЃiate naglo krenulo prema gore (displacement).
+ Order Block 
+ Breaker Block 
+Bearish Breaker Block
+Bearish breaker je stari bullish order block koji je probijen prema dole,  ime se invalidira kao zona kupnje i postaje zona 
+prodaje.  esto se koristi kao reversal zona. 
+Breaker Block 
+ Breaker Block 
+Bullish Breaker Block
+Bullish breaker je stari bearish order block koji je probijen prema gore,  ime se invalidira kao zona prodaje i postaje zona 
+kupnje.  esto se koristi kao reversal zona.
+Breaker Block 
+ Mitigation Block 
+Bearish Mitigation Block
+Bearish mitigation block je stari bearish order block koji je probijen prema dole i koji nije pokupio liquidity,  ime se invalidira 
+kao zona kupnja i postaje zona prodaje.  esto se koristi kao reversal zona.
+ Mitigation Block 
+Bullish Mitigation Block
+Bulish mitigation block je stari bullish order block koji je probijen prema gore i koji nije pokupio liquidity,  ime se invalidira kao 
+zona prodaje i postaje zona kupnje.  esto se koristi kao reversal zona.
+Rejection Block 
+Bearish Rejection Block
+Bearish rejection block je zona na kojoj je cijena bila snaЃno odbijena prema dole. Koristi se kao zona prodaje kada se cijena 
+vrati.
+Rejection Block 
+Bullish Rejection Block
+Bullish rejection block je zona na kojoj je cijena bila snaЃno odbijena prema gore. Koristi se kao zona kupnje kada se cijena 
+vrati.
+ Balance Price Range 
+Balance Prince Range

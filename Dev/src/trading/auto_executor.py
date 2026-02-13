@@ -90,6 +90,7 @@ class AutoExecutor:
         self._loss_streak = 0
         self._cooldown_until: Optional[datetime] = None
         self._last_reset_date: Optional[datetime] = None
+        self._last_ai_shadow_at: Optional[datetime] = None
 
         # STOP DAY tracking
         self._daily_losses: int = 0
@@ -109,6 +110,9 @@ class AutoExecutor:
             "wins": 0,
             "losses": 0
         }
+
+        if getattr(self.config.limit_entry, "allow_market_fallback", False):
+            logger.warning("MARKET_FALLBACK_ACTIVE | market_order_fallback_enabled=true")
 
         logger.info("AutoExecutor initialized")
 
@@ -154,11 +158,16 @@ class AutoExecutor:
             return self._create_skip_result(signal, limit_reason)
 
         # 6. Run full validation
+        grade_ok, grade_reason = self._validate_grade_execution(signal)
+        if not grade_ok:
+            return self._create_skip_result(signal, grade_reason)
+
+        # 7. Run full validation
         validation_ok, validation_reason = self._validate_signal(signal)
         if not validation_ok:
             return self._create_skip_result(signal, validation_reason)
 
-        # 7. Calculate position size
+        # 8. Calculate position size
         size_result = self._calculate_position_size(signal)
         if not size_result["can_trade"]:
             return self._create_skip_result(signal, f"Position sizing: {size_result['reason']}")
@@ -167,7 +176,7 @@ class AutoExecutor:
         if signal.direction == "SHORT":
             units = -units
 
-        # 8. AI VALIDATION - Claude decides!
+        # 9. AI VALIDATION - Claude decides!
         if self.config.should_use_ai_validation():
             ai_result = self._validate_with_ai(signal)
             if ai_result is None:
@@ -213,7 +222,7 @@ class AutoExecutor:
                     }
                 })
 
-        # 9. Execute trade (limit or market)
+        # 10. Execute trade (limit or market)
         try:
             if signal.use_limit_entry and signal.limit_price:
                 # === LIMIT ENTRY: Place pending order ===
@@ -248,6 +257,7 @@ class AutoExecutor:
                         "take_profit": signal.take_profit,
                         "units": units,
                         "confidence": signal.confidence,
+                        "risk_amount": size_result["risk_amount"],
                         "placed_at": datetime.now(timezone.utc).isoformat(),
                         "expiry_minutes": expiry_minutes,
                     }
@@ -275,13 +285,10 @@ class AutoExecutor:
                         }
                     })
 
-                    # Record as execution (pending)
-                    self._record_execution(signal, order_result)
-                    self._handle_learning_mode_increment()
-
                     return ExecutionResult(
                         signal=signal,
-                        executed=True,
+                        # Pending order placement is not an executed trade yet.
+                        executed=False,
                         order_result=order_result
                     )
                 else:
@@ -292,6 +299,14 @@ class AutoExecutor:
 
             else:
                 # === MARKET ENTRY: Existing behavior ===
+                if not getattr(self.config.limit_entry, "allow_market_fallback", False):
+                    return self._create_skip_result(
+                        signal,
+                        "Market-entry fallback disabled (requires explicit market-entry pattern/flag)"
+                    )
+                logger.warning(
+                    f"MARKET_FALLBACK_ACTIVE | instrument={signal.instrument} direction={signal.direction}"
+                )
                 order_result = self.order_manager.open_position(
                     instrument=signal.instrument,
                     units=units,
@@ -354,6 +369,41 @@ class AutoExecutor:
             logger.exception(f"Execution error for {signal.instrument}")
             return self._create_skip_result(signal, f"Exception: {e}")
 
+    def _validate_grade_execution(self, signal: TradingSignal) -> tuple[bool, str]:
+        """
+        Enforce SMC v2 grade execution policy when enabled.
+
+        Rules:
+        - A+ allowed if confidence >= min_confidence_a_plus
+        - A  allowed if confidence >= min_confidence_a
+        - B/NO_TRADE blocked for live execution
+        """
+        smc_v2 = getattr(self.config, "smc_v2", None)
+        if not smc_v2 or not smc_v2.enabled or not smc_v2.grade_execution.enabled:
+            return True, "SMC v2 grade execution disabled"
+
+        grade = None
+        if signal.smc_analysis:
+            grade = signal.smc_analysis.setup_grade
+        if not grade:
+            return False, "SMC v2 grade execution: missing setup grade"
+
+        if grade == "A+":
+            min_conf = smc_v2.grade_execution.min_confidence_a_plus
+            if signal.confidence < min_conf:
+                return False, f"SMC v2 grade execution: A+ confidence {signal.confidence}% < {min_conf}%"
+            return True, "A+ grade allowed"
+
+        if grade == "A":
+            if smc_v2.grade_execution.a_plus_only_live:
+                return False, "SMC v2 grade execution: A is disabled in A+ only mode"
+            min_conf = smc_v2.grade_execution.min_confidence_a
+            if signal.confidence < min_conf:
+                return False, f"SMC v2 grade execution: A confidence {signal.confidence}% < {min_conf}%"
+            return True, "A grade allowed"
+
+        return False, f"SMC v2 grade execution: {grade} is shadow-only"
+
     def _validate_with_ai(self, signal: TradingSignal) -> Optional[SignalValidation]:
         """
         Validate signal using Claude AI.
@@ -390,8 +440,14 @@ class AutoExecutor:
             result = self.llm_engine.validate_signal(signal_data)
 
             if result:
+                compact_reasoning = " ".join(str(result.reasoning).split())
                 logger.info(
                     f"AI Validation: {result.decision} ({result.latency_ms}ms) - {result.reasoning[:50]}..."
+                )
+                logger.info(
+                    f"AI_LAYER | EXECUTOR_DECISION | instrument={signal.instrument} direction={signal.direction} "
+                    f"decision={result.decision} model={result.model} latency_ms={result.latency_ms} "
+                    f"conf_adj={result.confidence_adjustment} reasoning=\"{compact_reasoning}\""
                 )
             return result
 
@@ -483,39 +539,102 @@ class AutoExecutor:
 
                 if position_exists:
                     # FILLED: Order converted to position
+                    trade_id = None
+                    fill_price = pending["limit_price"]
+                    units = pending.get("units")
+                    stop_loss = pending.get("stop_loss")
+                    take_profit = pending.get("take_profit")
+                    confidence = pending.get("confidence")
+                    risk_amount = pending.get("risk_amount")
+                    direction = pending["direction"]
+                    if positions:
+                        pos = positions[0]
+                        trade_id = str(pos.ticket)
+                        fill_price = float(getattr(pos, "price_open", fill_price))
+                        stop_loss = getattr(pos, "sl", stop_loss)
+                        take_profit = getattr(pos, "tp", take_profit)
+                        vol = float(getattr(pos, "volume", 0.0) or 0.0)
+                        symbol_info = mt5.symbol_info(symbol)
+                        contract_size = float(getattr(symbol_info, "trade_contract_size", 100000.0) or 100000.0)
+                        signed_units = int(round(vol * contract_size))
+                        if getattr(pos, "type", None) == mt5.ORDER_TYPE_SELL:
+                            signed_units = -abs(signed_units)
+                        elif getattr(pos, "type", None) == mt5.ORDER_TYPE_BUY:
+                            signed_units = abs(signed_units)
+                        if signed_units:
+                            units = signed_units
+                        if getattr(pos, "type", None) == mt5.ORDER_TYPE_BUY:
+                            direction = "LONG"
+                        elif getattr(pos, "type", None) == mt5.ORDER_TYPE_SELL:
+                            direction = "SHORT"
+
                     event = {
                         "type": "FILLED",
                         "instrument": instrument,
-                        "direction": pending["direction"],
+                        "direction": direction,
                         "order_ticket": order_ticket,
                         "limit_price": pending["limit_price"],
+                        "trade_id": trade_id,
                     }
                     events.append(event)
                     instruments_to_remove.append(instrument)
 
                     logger.info(
-                        f"LIMIT ORDER FILLED: {instrument} {pending['direction']} "
-                        f"@ {pending['limit_price']:.5f} (order #{order_ticket})"
+                        f"LIMIT ORDER FILLED: {instrument} {direction} "
+                        f"@ {fill_price:.5f} (order #{order_ticket})"
                     )
 
                     db.log_activity({
                         "activity_type": "LIMIT_ORDER_FILLED",
                         "instrument": instrument,
-                        "direction": pending["direction"],
-                        "confidence": pending.get("confidence", 0),
-                        "reasoning": f"Limit order #{order_ticket} filled at {pending['limit_price']:.5f}",
+                        "direction": direction,
+                        "confidence": confidence or 0,
+                        "reasoning": f"Limit order #{order_ticket} filled at {fill_price:.5f}",
                         "details": pending,
                     })
 
-                    # Update trade source
+                    # Ensure trade exists in DB and mark as auto limit execution.
                     try:
-                        # Find the position ticket
-                        for pos in positions:
-                            trade_id = str(pos.ticket)
+                        if trade_id and not db.get_trade(trade_id):
+                            db.log_trade({
+                                "trade_id": trade_id,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "instrument": instrument,
+                                "direction": direction,
+                                "entry_price": fill_price,
+                                "stop_loss": stop_loss,
+                                "take_profit": take_profit,
+                                "units": units,
+                                "risk_amount": risk_amount,
+                                "confidence_score": confidence,
+                                "notes": f"Filled from pending order #{order_ticket}",
+                            })
+                        if trade_id:
                             db.update_trade_source(trade_id, "AUTO_SCALPING_LIMIT")
-                            break
                     except Exception as e:
                         logger.warning(f"Could not update trade source for filled limit: {e}")
+
+                    db.log_activity({
+                        "activity_type": "TRADE_EXECUTED",
+                        "instrument": instrument,
+                        "direction": direction,
+                        "confidence": confidence or 0,
+                        "decision": "EXECUTE",
+                        "trade_id": trade_id,
+                        "reasoning": f"Pending limit converted to live position (order #{order_ticket})",
+                        "details": {
+                            "order_id": str(order_ticket),
+                            "trade_id": trade_id,
+                            "entry_price": fill_price,
+                            "stop_loss": stop_loss,
+                            "take_profit": take_profit,
+                            "risk_amount": risk_amount,
+                        },
+                    })
+
+                    self._stats["total_executed"] += 1
+                    self._daily_trades[instrument] = self._daily_trades.get(instrument, 0) + 1
+                    self._handle_learning_mode_increment()
 
                 else:
                     # EXPIRED: Order gone, no position
@@ -616,7 +735,11 @@ class AutoExecutor:
             mt5_positions = self.order_manager.client.get_positions()
 
             # Sync stale DB trades with MT5 (close trades that are OPEN in DB but not in MT5)
-            sync_result = db.sync_trades_with_mt5(mt5_positions)
+            sync_result = db.sync_trades_with_mt5(
+                mt5_positions,
+                mt5_history=[],
+                mt5_client=self.order_manager.client,
+            )
             if sync_result["closed"]:
                 logger.info(f"Synced DB: closed {len(sync_result['closed'])} stale trades")
 
@@ -763,6 +886,7 @@ class AutoExecutor:
         """Create a skip result."""
         self._stats["total_skipped"] += 1
         logger.info(f"Signal skipped: {signal.instrument} - {reason}")
+        self._run_ai_shadow_for_skip(signal, reason)
 
         # Log to activity
         db.log_activity({
@@ -784,6 +908,57 @@ class AutoExecutor:
             signal=signal,
             executed=False,
             skip_reason=reason
+        )
+
+    def _run_ai_shadow_for_skip(self, signal: TradingSignal, skip_reason: str) -> None:
+        """
+        Run throttled AI shadow validation for skipped signals.
+
+        This gives AI_LAYER visibility even when no order reaches execution.
+        """
+        if not self.config.should_use_ai_validation():
+            return
+        if not getattr(self.config.ai_validation, "shadow_on_skip", False):
+            return
+        if skip_reason.startswith("AI REJECTED") or skip_reason.startswith("AI validation failed"):
+            return
+
+        cooldown_seconds = max(0, int(getattr(self.config.ai_validation, "shadow_cooldown_seconds", 45)))
+        now = datetime.now(timezone.utc)
+        if self._last_ai_shadow_at and cooldown_seconds > 0:
+            elapsed = (now - self._last_ai_shadow_at).total_seconds()
+            if elapsed < cooldown_seconds:
+                return
+
+        # Focus on decision-relevant skips to avoid noisy/costly calls.
+        shadow_reasons = (
+            "No CHoCH or BOS on LTF",
+            "No clear SMC direction",
+            "SMC v2 grade execution",
+            "R:R ",
+            "Invalid SL/TP geometry",
+            "Filter:",
+            "htf_poi_gate",
+            "Spread too high",
+        )
+        if not any(token in skip_reason for token in shadow_reasons):
+            return
+
+        self._last_ai_shadow_at = now
+        result = self._validate_with_ai(signal)
+        if result is None:
+            logger.info(
+                f"AI_LAYER | SHADOW_SKIP | instrument={signal.instrument} direction={signal.direction} "
+                f"skip_reason=\"{skip_reason}\" ai_status=FAILED"
+            )
+            return
+
+        compact_reasoning = " ".join(str(result.reasoning).split())
+        logger.info(
+            f"AI_LAYER | SHADOW_SKIP | instrument={signal.instrument} direction={signal.direction} "
+            f"skip_reason=\"{skip_reason}\" ai_decision={result.decision} model={result.model} "
+            f"latency_ms={result.latency_ms} conf_adj={result.confidence_adjustment} "
+            f"reasoning=\"{compact_reasoning}\""
         )
 
     def record_trade_result(self, pnl: float, is_win: bool) -> None:

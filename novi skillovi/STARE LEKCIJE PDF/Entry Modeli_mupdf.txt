@@ -1,0 +1,161 @@
+=== Page 2 ===
+X
+2.
+ENTRY MODELI KOJE JA KORISTIM
+DEMAND
+DEMAND
+SUPPLY
+SUPPLY
+DEMAND
+X
+X
+SUPPLY
+
+
+=== Page 3 ===
+3.
+SUPPLY I DEMAND ENTRY MODEL
+DEMAND
+DEMAND
+SUPPLY
+SUPPLY
+Ovo je najjednostavniji i najbazičniji entry model kojeg koristim,
+i možda onaj kojeg ćete najčešće viđati na tržištu.
+Možete ga primjetiti na svim timeframe-ovima, svim tržištima i
+svim valutnim parovima na dnevnoj bazi.
+Tržište se kreće u trendovima (Bullish, Bearish) te samim time
+ostavlja očekivanje da će i dalje nastaviti u tom trendu.
+Međutim, ovaj, kao i nijedan drugi entry model neće
+funkcionirati u 100% slučajeva bez ijednog promašaja.
+Stoga, potrebno je čekati i tražiti konfirmaciju na manjem
+timeframe-u kako bi maksimalno osigurali svoje pozicije.
+Uz adekvatnu konfirmaciju, ovaj entry model može raditi čuda
+za vas, i uz samo njega možete ostvariti odlične rezultate.
+
+
+=== Page 4 ===
+DEMAND
+X
+X
+SUPPLY
+4.
+SUPPLY I DEMAND KAO LIQUIDITY
+Supply & Demand zone ponekad ne zadrže cijenu kao na
+prethodnom slajdu, te u tom slučaju onda služe kao Liquidity.
+U nekim slučajevima, cijena odradi Liquidity Sweep Demand-a
+ili Supply-a i tek onda nastavlja dalje u pravcu trenda.
+Nikada skoro ne možemo znati kada će Demand ili Supply
+zona zadržati cijenu, a kada ne. Međutim postoji način kako
+mi ovo možemo iskoristiti u našu korist.
+Poanta je u tome da zapravo uvijek čekamo konfirmaciju na
+manjem timeframe-u, te u slučaju da nemamo nikakvu
+konfirmaciju, najvjerovatnije možemo očekivati Liquidity
+Sweep Supply ili Demand zone.
+I tek nakon što cijena pokupi likvidnost iza Demand i Supply
+zone, možemo ponovno gledati i pratiti konfirmaciju za entry
+na manjem timeframe-u kako bi maksimalno osigurali svoju
+poziciju.
+
+
+=== Page 5 ===
+5.
+LIQUIDITY ENTRY MODEL
+X
+Treći i posljednji entry model kojeg koristim, je Liquidity. 
+Temu Liquidity-a smo već obradili u zasebnom PDF-u, te smo
+ustanovili da je likvidnost zapravo ono što pokreće Forex
+tržište kao i mnogobrojna druga tržišta.
+Liquidity možete vidjeti u raznim oblicima; Swing Highs /
+Lows, Double Tops / Bottoms, Trendline Liquidity, Liquidity
+Inducement, itd.
+Ako bolje obratite pažnju, primjetiti ćete koliko zapravo često
+se cijena, odmah nakon skupljene likvidnosti nekog Swing
+High-a ili Swing Low-a, okreće u suprotnom smjeru.
+Baš kao i za prethodna 2 entry modela, za ovaj također
+čekamo konfirmaciju na manjem Timeframe-u kako bi dobili
+potvrdu od tržišta da zapravo ide u našem željenom smjeru. 
+
+
+=== Page 6 ===
+6.
+KONFIRMACIJA NA MANJEM TF
+Za svaki od ovih entry modela, spominjao sam da je potrebno čekati i
+tražiti konfirmaciju na manjem Timeframe-u. 
+Ako se Supply / Demand / Liquidity zona nalazi na H4, onda koristim M15
+timeframe kao konfirmaciju. Ukoliko se zona nalazi na H1, onda koristim
+M5 kao konfirmaciju.
+Međutim, o kakvoj se točno konfirmaciji radi?
+Kao konfirmaciju za ulazak u trade, pratim strukturu marketa unutar
+jednog od navedena 3 entry modela, i čekam da dobijem CHOCH.
+Uvjeti koji se moraju dodatno poklapati da određeni CHOCH smatram
+validnim na manjem TF su sljedeći:
+Supply / Demand zona mora imati FVG ispod / iznad sebe.
+LTF (Lower Timeframe) zona mora biti u Discount zoni za kupnju,
+ili u Premium zoni za prodaju.
+Unaprijed postavljamo Limit Order i kao target gledamo da uvijek bude
+mehanički 1:3 RR ili gađamo neku Liquidity zonu ovisno o primjeru. 
+U svakom slučaju, nikada se ne spuštamo ispod 1:3 RR.
+X
+BULLISH CHOCH
+X
+BEARISH CHOCH
+
+
+=== Page 7 ===
+PRIMJER H4 ZONE + M15 KONFIRMACIJE
+H4 TIMEFRAME
+M15 TIMEFRAME
+M15 TIMEFRAME
+M15 TIMEFRAME
+7.
+
+
+=== Page 8 ===
+8.
+PRIMJER H1 ZONE + M5 KONFIRMACIJE
+H1 TIMEFRAME
+M5 TIMEFRAME
+M5 TIMEFRAME
+
+
+=== Page 9 ===
+9.
+RE-ENTRY MODEL
+CHOCH
+BOS
+Bearish Trend
+Bullish Trend
+CHOCH - Prelazak iz Bearish u Bullish trend
+$$
+DEMAND ZONA
+SA LIJEVE STRANE
+DEMAND ZONA
+(Propušten entry)
+NOVA LTF 
+DEMAND ZONA
+1:3 RR
+Nakon što cijena napravi CHOCH na manjem timeframe-u i dobijemo
+konfirmaciju koju smo čekali, označavamo našu Supply / Demand
+zonu na kojoj postavljamo Limit Order i čekamo da nas cijena ubaci u
+trade.
+Međutim, ponekad će se dogoditi da nam cijena ne pruži priliku za
+entry, već napravi novi BOS i nastavi dalje u pravcu većeg timeframe-a.
+U tom slučaju, ono što možemo napraviti je označiti novu Supply /
+Demand zonu koju je stvorila zadnja struktura u makretu, te strpljivo
+sačekati cijenu da se vrati do naše zone interesa.
+Kako bi smatrali našu novu Supply / Demand zonu validnom, ona
+mora:
+Probiti novu strukturu na manjem TF (napraviti BOS)
+Imati FVG ispod / iznad sebe
+Imati neki oblik Liquidity Inducement-a ispod / iznad sebe 
+Ukoliko su svi uvjeti ispoštovani, ponovno postavljamo Limit Order na
+našoj zoni uz 1:3 RR.
+
+
+=== Page 10 ===
+10.
+RE-ENTRY MODEL - PRIMJER
+H1 TIMEFRAME
+M5 TIMEFRAME
+M5 TIMEFRAME
+M5 TIMEFRAME

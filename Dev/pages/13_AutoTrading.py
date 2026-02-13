@@ -9,6 +9,8 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import csv
+import io
 
 # Page config
 st.set_page_config(
@@ -744,6 +746,121 @@ def render_configuration(config: AutoTradingConfig):
         except Exception as e:
             st.error(f"AI Status: Error - {e}")
 
+    with st.expander("SMC v2 Rollout", expanded=True):
+        st.caption("Shadow-first rollout controls for SMC v2 execution gates.")
+
+        colr1, colr2, colr3 = st.columns(3)
+        with colr1:
+            if st.button("Preset: Shadow Only", use_container_width=True, key="smcv2_preset_shadow"):
+                config.smc_v2.enabled = True
+                config.smc_v2.shadow_mode = True
+                config.smc_v2.grade_execution.enabled = False
+                config.smc_v2.grade_execution.a_plus_only_live = False
+                if save_auto_config(config):
+                    st.success("Applied preset: Shadow Only")
+                    st.rerun()
+                st.error("Failed to apply preset")
+        with colr2:
+            if st.button("Preset: A+ Live", use_container_width=True, key="smcv2_preset_aplus"):
+                config.smc_v2.enabled = True
+                config.smc_v2.shadow_mode = True
+                config.smc_v2.grade_execution.enabled = True
+                config.smc_v2.grade_execution.a_plus_only_live = True
+                config.smc_v2.grade_execution.min_confidence_a_plus = 45
+                if save_auto_config(config):
+                    st.success("Applied preset: A+ Live")
+                    st.rerun()
+                st.error("Failed to apply preset")
+        with colr3:
+            if st.button("Preset: A+ & A Live", use_container_width=True, key="smcv2_preset_aaplus"):
+                config.smc_v2.enabled = True
+                config.smc_v2.shadow_mode = True
+                config.smc_v2.grade_execution.enabled = True
+                config.smc_v2.grade_execution.a_plus_only_live = False
+                config.smc_v2.grade_execution.min_confidence_a_plus = 45
+                config.smc_v2.grade_execution.min_confidence_a = 60
+                if save_auto_config(config):
+                    st.success("Applied preset: A+ & A Live")
+                    st.rerun()
+                st.error("Failed to apply preset")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            smcv2_enabled = st.toggle(
+                "Enable SMC v2",
+                value=config.smc_v2.enabled,
+                key="cfg_smcv2_enabled"
+            )
+            smcv2_shadow = st.toggle(
+                "Shadow Mode",
+                value=config.smc_v2.shadow_mode,
+                key="cfg_smcv2_shadow"
+            )
+            smcv2_grade_exec = st.toggle(
+                "Enable Grade Execution (Live Gate)",
+                value=config.smc_v2.grade_execution.enabled,
+                key="cfg_smcv2_grade_exec"
+            )
+            smcv2_aplus_only = st.toggle(
+                "A+ Only Live",
+                value=config.smc_v2.grade_execution.a_plus_only_live,
+                key="cfg_smcv2_aplus_only"
+            )
+
+        with col2:
+            smcv2_min_conf_aplus = st.slider(
+                "Min Confidence A+",
+                min_value=35,
+                max_value=95,
+                value=int(config.smc_v2.grade_execution.min_confidence_a_plus),
+                key="cfg_smcv2_min_conf_aplus"
+            )
+            smcv2_min_conf_a = st.slider(
+                "Min Confidence A",
+                min_value=40,
+                max_value=99,
+                value=int(config.smc_v2.grade_execution.min_confidence_a),
+                key="cfg_smcv2_min_conf_a"
+            )
+            smcv2_news_block_min = st.slider(
+                "News Block Minutes",
+                min_value=5,
+                max_value=60,
+                value=int(config.smc_v2.news_gate.block_minutes),
+                key="cfg_smcv2_news_block_min"
+            )
+
+        colg1, colg2, colg3, colg4 = st.columns(4)
+        with colg1:
+            smcv2_strict_sweep = st.toggle(
+                "Strict Sweep",
+                value=config.smc_v2.strict_sweep.enabled,
+                key="cfg_smcv2_strict_sweep"
+            )
+        with colg2:
+            smcv2_strict_fvg = st.toggle(
+                "Strict FVG",
+                value=config.smc_v2.strict_fvg.enabled,
+                key="cfg_smcv2_strict_fvg"
+            )
+        with colg3:
+            smcv2_htf_poi = st.toggle(
+                "HTF POI Gate",
+                value=config.smc_v2.htf_poi_gate.enabled,
+                key="cfg_smcv2_htf_poi"
+            )
+        with colg4:
+            smcv2_killzone = st.toggle(
+                "Killzone Gate",
+                value=config.smc_v2.killzone_gate.enabled,
+                key="cfg_smcv2_killzone"
+            )
+        smcv2_news_gate = st.toggle(
+            "News Gate",
+            value=config.smc_v2.news_gate.enabled,
+            key="cfg_smcv2_news_gate"
+        )
+
     # Save button
     if st.button("Save Configuration", type="primary", use_container_width=True):
         # Update config
@@ -767,6 +884,19 @@ def render_configuration(config: AutoTradingConfig):
         config.ai_validation.enabled = ai_enabled
         config.ai_validation.reject_on_failure = ai_reject_on_failure
         config.ai_validation.skip_in_learning_mode = ai_skip_learning
+
+        config.smc_v2.enabled = smcv2_enabled
+        config.smc_v2.shadow_mode = smcv2_shadow
+        config.smc_v2.grade_execution.enabled = smcv2_grade_exec
+        config.smc_v2.grade_execution.a_plus_only_live = smcv2_aplus_only
+        config.smc_v2.grade_execution.min_confidence_a_plus = smcv2_min_conf_aplus
+        config.smc_v2.grade_execution.min_confidence_a = smcv2_min_conf_a
+        config.smc_v2.strict_sweep.enabled = smcv2_strict_sweep
+        config.smc_v2.strict_fvg.enabled = smcv2_strict_fvg
+        config.smc_v2.htf_poi_gate.enabled = smcv2_htf_poi
+        config.smc_v2.killzone_gate.enabled = smcv2_killzone
+        config.smc_v2.news_gate.enabled = smcv2_news_gate
+        config.smc_v2.news_gate.block_minutes = smcv2_news_block_min
 
         # Validate and save
         is_valid, errors = config.validate()
@@ -1035,6 +1165,162 @@ def render_recent_signals():
                 st.caption(signal.get("skip_reason", ""))
 
 
+def render_smc_v2_shadow():
+    """Render SMC v2 shadow evaluation stats and recent labels."""
+    st.subheader("SMC v2 Shadow")
+
+    shadow_stats = db.get_smc_v2_shadow_stats(hours=24)
+    gate_stats = db.get_smc_v2_gate_stats(hours=24)
+    by_instrument = db.get_smc_v2_by_instrument(hours=24)
+    labels = db.get_recent_setup_labels(limit=20)
+    export_labels = db.get_recent_setup_labels(limit=1000)
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Evaluations (24h)", shadow_stats.get("total", 0))
+    with col2:
+        st.metric("Allow", shadow_stats.get("allow_count", 0))
+    with col3:
+        st.metric("Block", shadow_stats.get("block_count", 0))
+    with col4:
+        st.metric("Allow Rate", f"{shadow_stats.get('allow_rate', 0.0):.1f}%")
+
+    by_grade = shadow_stats.get("by_grade", {})
+    if by_grade:
+        st.caption(
+            "Grade distribution: " +
+            ", ".join([f"{k}: {v}" for k, v in by_grade.items()])
+        )
+
+    top_block = shadow_stats.get("top_block_reasons", [])
+    if top_block:
+        st.markdown("**Top Block Reasons (24h)**")
+        for item in top_block:
+            st.caption(f"- {item.get('reason', 'N/A')} ({item.get('count', 0)})")
+
+    st.markdown("---")
+    st.markdown("**Gate Pass Rates (24h)**")
+    gate_order = [
+        "within_killzone",
+        "news_clear",
+        "htf_poi_gate",
+        "sweep_valid",
+        "fvg_valid",
+        "direction_confirmed",
+        "choch_or_bos",
+        "rr_pass",
+        "sl_cap_pass",
+    ]
+    gate_chunks = [gate_order[i:i+3] for i in range(0, len(gate_order), 3)]
+    for chunk in gate_chunks:
+        cols = st.columns(3)
+        for idx, gate_name in enumerate(chunk):
+            stat = gate_stats.get(gate_name, {})
+            with cols[idx]:
+                st.metric(
+                    gate_name,
+                    f"{stat.get('pass_rate', 0.0):.1f}%",
+                    help=f"Pass {stat.get('pass_count', 0)} / {stat.get('total', 0)}"
+                )
+
+    st.markdown("---")
+    st.markdown("**Instrument Breakdown (24h)**")
+    if by_instrument:
+        for row in by_instrument:
+            c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 1])
+            with c1:
+                st.caption(row.get("instrument"))
+            with c2:
+                st.caption(f"Eval: {row.get('total', 0)}")
+            with c3:
+                st.caption(f"Allow: {row.get('allow_count', 0)}")
+            with c4:
+                st.caption(f"Block: {row.get('block_count', 0)}")
+            with c5:
+                st.caption(f"Rate: {row.get('allow_rate', 0.0):.1f}%")
+    else:
+        st.caption("No instrument-level SMC v2 data in last 24h.")
+
+    st.markdown("---")
+    if export_labels:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "timestamp", "instrument", "direction", "setup_grade", "confidence",
+            "risk_reward", "allow_trade", "reason", "within_killzone", "news_clear",
+            "htf_poi_gate", "sweep_valid", "fvg_valid", "direction_confirmed",
+            "choch_or_bos", "rr_pass", "sl_cap_pass", "details_json"
+        ])
+        for row in export_labels:
+            details = row.get("details") if isinstance(row.get("details"), dict) else {}
+            gates = details.get("gates", {}) if isinstance(details, dict) else {}
+            writer.writerow([
+                row.get("timestamp"),
+                row.get("instrument"),
+                row.get("direction"),
+                row.get("setup_grade"),
+                row.get("confidence"),
+                row.get("risk_reward"),
+                row.get("allow_trade"),
+                row.get("reason"),
+                row.get("within_killzone"),
+                row.get("news_clear"),
+                row.get("htf_poi_gate"),
+                row.get("sweep_valid"),
+                row.get("fvg_valid") if row.get("fvg_valid") is not None else gates.get("fvg_valid"),
+                row.get("direction_confirmed"),
+                row.get("choch_or_bos"),
+                row.get("rr_pass"),
+                row.get("sl_cap_pass"),
+                json.dumps(details),
+            ])
+        st.download_button(
+            label="Export Setup Labels CSV",
+            data=output.getvalue(),
+            file_name=f"setup_labels_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    st.markdown("---")
+    st.markdown("**Recent Evaluations**")
+    if not labels:
+        st.info("No SMC v2 labels yet. Enable `smc_v2.enabled=true` + `shadow_mode=true` and run scanner.")
+        return
+
+    for row in labels:
+        ts = str(row.get("timestamp", ""))[:19]
+        instrument = row.get("instrument", "")
+        direction = row.get("direction") or "-"
+        grade = row.get("setup_grade") or "NO_TRADE"
+        conf = row.get("confidence")
+        rr = row.get("risk_reward")
+        allow = bool(row.get("allow_trade"))
+        reason = row.get("reason") or ""
+        details = row.get("details") if isinstance(row.get("details"), dict) else {}
+        gates = details.get("gates", {})
+        gate_summary = ", ".join([
+            f"{k}={'Y' if v is True else 'N' if v is False else '-'}"
+            for k, v in gates.items()
+        ]) if gates else ""
+
+        c1, c2, c3, c4, c5 = st.columns([2, 2, 1, 1, 4])
+        with c1:
+            st.caption(ts)
+        with c2:
+            color = "green" if direction == "LONG" else "red" if direction == "SHORT" else "gray"
+            st.markdown(f"**{instrument}** :{color}[{direction}]")
+        with c3:
+            st.caption(f"{grade} | {conf if conf is not None else '-'}%")
+        with c4:
+            st.success("ALLOW") if allow else st.warning("BLOCK")
+        with c5:
+            rr_text = f"RR={rr:.2f}" if isinstance(rr, (int, float)) else "RR=-"
+            st.caption(f"{rr_text} | {reason}")
+            if gate_summary:
+                st.caption(gate_summary)
+
+
 def render_hard_limits():
     """Render hard limits info."""
     st.subheader("Safety Limits")
@@ -1097,11 +1383,12 @@ def main():
     st.divider()
 
     # Tabs for different sections
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Learning Mode",
         "AI Thinking",
         "Decision Trail",
         "Recent Signals",
+        "SMC v2 Shadow",
         "Configuration",
         "Safety Limits"
     ])
@@ -1119,9 +1406,12 @@ def main():
         render_recent_signals()
 
     with tab5:
-        render_configuration(config)
+        render_smc_v2_shadow()
 
     with tab6:
+        render_configuration(config)
+
+    with tab7:
         render_hard_limits()
 
     # Footer with service status

@@ -32,7 +32,12 @@ from enum import Enum
 
 from src.smc import SMCAnalyzer, SMCAnalysis
 from src.market.indicators import TechnicalAnalyzer
-from src.utils.instrument_profiles import get_profile
+from src.core.auto_config import load_auto_config
+from src.utils.instrument_profiles import (
+    get_profile,
+    get_profile_strict,
+    normalize_instrument_symbol,
+)
 from src.utils.logger import logger
 
 
@@ -80,6 +85,9 @@ class BacktestConfig:
     isi_sequence_tracker: bool = False  # Enable sequence phase tracking
     isi_cross_asset: bool = False       # Enable cross-asset divergence
     isi_calibrator: bool = False        # Enable Platt Scaling calibration
+    # Parity with live SMC v2 execution gates.
+    smc_v2_parity: bool = True
+    enforce_strict_profile: bool = True
 
 
 @dataclass
@@ -404,6 +412,14 @@ class SMCBacktestEngine:
     def __init__(self):
         self.smc_analyzer = SMCAnalyzer()
         self.technical_analyzer = TechnicalAnalyzer()
+        self.live_auto_config = load_auto_config()
+
+    def _requires_live_hard_gates(self, instrument: str) -> bool:
+        smc_v2 = getattr(self.live_auto_config, "smc_v2", None)
+        if not smc_v2 or not smc_v2.enabled or not smc_v2.grade_execution.enabled:
+            return False
+        symbol = instrument.upper()
+        return ("XAU" in symbol) or ("GBP" in symbol)
 
     def _get_pip_value(self, instrument: str) -> float:
         if "XAU" in instrument:
@@ -483,6 +499,102 @@ class SMCBacktestEngine:
             return False, "VOLATILE regime"
 
         return True, ""
+
+    def _is_in_killzone(self, candle_time: str) -> tuple[bool, str]:
+        """Mirror scanner killzone windows using candle timestamp."""
+        try:
+            dt = datetime.fromisoformat(candle_time.replace("Z", "+00:00"))
+            hour = dt.hour
+        except Exception:
+            return False, ""
+        if 7 <= hour < 9:
+            return True, "LONDON_OPEN"
+        if 12 <= hour < 14:
+            return True, "NY_OPEN"
+        if 15 <= hour < 17:
+            return True, "LONDON_CLOSE"
+        return False, ""
+
+    def _is_in_killzone_for_instrument(self, profile: dict, candle_time: str) -> tuple[bool, str]:
+        in_kz, kz_name = self._is_in_killzone(candle_time)
+        if not in_kz:
+            return False, ""
+        allowed = profile.get("killzones", [])
+        if not allowed:
+            return in_kz, kz_name
+        return kz_name in allowed, kz_name
+
+    def _compute_htf_range_and_poi_gate(
+        self, smc_analysis: Optional[SMCAnalysis], direction_hint: Optional[str] = None
+    ) -> tuple[Optional[bool], Optional[float], Optional[str]]:
+        if not smc_analysis:
+            return None, None, "HTF_POI_DATA_MISSING"
+        htf_low = float(getattr(smc_analysis, "htf_swing_low", 0.0) or 0.0)
+        htf_high = float(getattr(smc_analysis, "htf_swing_high", 0.0) or 0.0)
+        current_price = float(getattr(smc_analysis, "current_price", 0.0) or 0.0)
+        if htf_high <= htf_low or current_price <= 0:
+            return None, None, "HTF_POI_DATA_MISSING"
+        range_pos = (current_price - htf_low) / (htf_high - htf_low)
+        direction = (getattr(smc_analysis, "direction", None) or direction_hint or "").upper()
+        if direction == "SHORT":
+            return range_pos >= 0.75, range_pos, None
+        if direction == "LONG":
+            return range_pos <= 0.25, range_pos, None
+        return False, range_pos, "HTF_POI_DIRECTION_MISSING"
+
+    def _effective_min_rr(self, setup_grade: str, config: BacktestConfig, profile: dict) -> float:
+        rr = float(profile.get("target_rr", config.target_rr))
+        smc_v2 = getattr(self.live_auto_config, "smc_v2", None)
+        if (
+            config.smc_v2_parity
+            and smc_v2
+            and smc_v2.enabled
+            and smc_v2.grade_execution.enabled
+            and setup_grade in ("A+", "A")
+        ):
+            rr = float(smc_v2.risk.min_rr.get(setup_grade, rr))
+        return rr
+
+    def _min_conf_for_grade(self, setup_grade: str, config: BacktestConfig) -> int:
+        smc_v2 = getattr(self.live_auto_config, "smc_v2", None)
+        if not (config.smc_v2_parity and smc_v2 and smc_v2.enabled and smc_v2.grade_execution.enabled):
+            return int(config.min_confidence)
+        if setup_grade == "A+":
+            return int(smc_v2.grade_execution.min_confidence_a_plus)
+        if setup_grade == "A":
+            return int(smc_v2.grade_execution.min_confidence_a)
+        return int(config.min_confidence)
+
+    def _apply_smc_v2_sl_caps(
+        self, instrument: str, entry_price: float, stop_loss: float, direction: str, config: BacktestConfig
+    ) -> tuple[float, Optional[str]]:
+        smc_v2 = getattr(self.live_auto_config, "smc_v2", None)
+        if not (config.smc_v2_parity and smc_v2 and smc_v2.enabled):
+            return stop_loss, None
+
+        distance = abs(entry_price - stop_loss)
+        symbol = instrument.upper()
+        if "XAU" in symbol:
+            points = distance / 0.01
+            min_points = float(smc_v2.risk.xau_sl_caps.get("min_points", 120))
+            max_points = float(smc_v2.risk.xau_sl_caps.get("max_points", 450))
+            if points > max_points:
+                return stop_loss, f"SL_CAP_XAU_{points:.1f}_GT_{max_points:.1f}"
+            if points < min_points:
+                adj = min_points * 0.01
+                stop_loss = entry_price - adj if direction == "LONG" else entry_price + adj
+            return stop_loss, None
+
+        pip_value = 0.01 if "JPY" in symbol else 0.0001
+        pips = distance / pip_value if pip_value > 0 else 0.0
+        min_pips = float(smc_v2.risk.fx_sl_caps.get("min_pips", 4.0))
+        max_pips = float(smc_v2.risk.fx_sl_caps.get("max_pips", 18.0))
+        if pips > max_pips:
+            return stop_loss, f"SL_CAP_FX_{pips:.1f}_GT_{max_pips:.1f}"
+        if pips < min_pips:
+            adj = min_pips * pip_value
+            stop_loss = entry_price - adj if direction == "LONG" else entry_price + adj
+        return stop_loss, None
 
     def _get_htf_candles_at(self, all_htf: list, m5_timestamp: int, lookback: int) -> list:
         """Get HTF candles that existed at the time of a given M5 bar."""
@@ -695,7 +807,13 @@ class SMCBacktestEngine:
         6. SL/TP from SMC zones
         7. R:R check
         """
-        instrument = config.instrument
+        instrument = normalize_instrument_symbol(config.instrument)
+        profile = get_profile(instrument)
+        if config.enforce_strict_profile:
+            try:
+                profile = get_profile_strict(instrument)
+            except KeyError:
+                return {"skip": "STRICT_PROFILE_MISSING"}
 
         # Need minimum data
         if len(h4_window) < 20 or len(h1_window) < 20 or len(m5_window) < 30:
@@ -763,8 +881,59 @@ class SMCBacktestEngine:
 
         confidence = calibrated_confidence
 
-        if confidence < config.min_confidence:
-            return {"skip": f"CONFIDENCE_{confidence}_BELOW_{config.min_confidence}"}
+        min_conf_required = self._min_conf_for_grade(smc_analysis.setup_grade, config)
+        if confidence < min_conf_required:
+            return {"skip": f"CONFIDENCE_{confidence}_BELOW_{min_conf_required}"}
+
+        # Live SMC v2 parity gates (grade execution + killzone + HTF POI + strict sweep/FVG).
+        smc_v2 = getattr(self.live_auto_config, "smc_v2", None)
+        if config.smc_v2_parity and smc_v2 and smc_v2.enabled:
+            # A+/A only for live-grade execution mode.
+            if smc_v2.grade_execution.enabled and smc_analysis.setup_grade not in ("A+", "A"):
+                return {"skip": f"GRADE_{smc_analysis.setup_grade}_NOT_LIVE_ELIGIBLE"}
+
+            force_live_hard = self._requires_live_hard_gates(instrument)
+            candle_time = m5_window[-1].get("time", "")
+
+            if smc_v2.killzone_gate.enabled or force_live_hard:
+                kz_ok, _ = self._is_in_killzone_for_instrument(profile, candle_time)
+                if not kz_ok:
+                    return {"skip": "OUTSIDE_KILLZONE"}
+
+            if smc_v2.htf_poi_gate.enabled or force_live_hard:
+                htf_poi_gate, _, poi_reason = self._compute_htf_range_and_poi_gate(
+                    smc_analysis=smc_analysis,
+                    direction_hint=smc_analysis.direction,
+                )
+                if poi_reason:
+                    return {"skip": poi_reason}
+                if not htf_poi_gate:
+                    return {"skip": "HTF_POI_GATE_FAILED"}
+
+            if smc_v2.strict_sweep.enabled:
+                if not (smc_analysis.sweep_detected and smc_analysis.sweep_detected.reversal_confirmed):
+                    return {"skip": "STRICT_SWEEP_FAILED"}
+
+            if smc_v2.strict_fvg.enabled:
+                atr_pips = float(getattr(technical, "atr_pips", 0.0) or 0.0)
+                atr_price = atr_pips * self._get_pip_value(instrument)
+                valid_fvgs = 0
+                for fvg in smc_analysis.fvgs:
+                    if fvg.filled:
+                        continue
+                    gap_ok = (atr_price > 0 and fvg.size >= 1.2 * atr_price)
+                    displacement_ok = bool(
+                        smc_analysis.ltf_displacement
+                        and smc_analysis.ltf_displacement.direction == fvg.direction
+                    )
+                    htf_align_ok = (
+                        (smc_analysis.htf_bias == "BULLISH" and fvg.direction == "BULLISH")
+                        or (smc_analysis.htf_bias == "BEARISH" and fvg.direction == "BEARISH")
+                    )
+                    if gap_ok and displacement_ok and htf_align_ok:
+                        valid_fvgs += 1
+                if valid_fvgs <= 0:
+                    return {"skip": "STRICT_FVG_FAILED"}
 
         # SL/TP from SMC
         if not smc_analysis.stop_loss or not smc_analysis.take_profit:
@@ -773,6 +942,15 @@ class SMCBacktestEngine:
         entry_price = m5_window[-1]["close"]
         sl = smc_analysis.stop_loss
         tp = smc_analysis.take_profit
+        sl, sl_block_reason = self._apply_smc_v2_sl_caps(
+            instrument=instrument,
+            entry_price=entry_price,
+            stop_loss=sl,
+            direction=direction,
+            config=config,
+        )
+        if sl_block_reason:
+            return {"skip": sl_block_reason}
 
         # Validate SL/TP makes sense
         if direction == "LONG":
@@ -787,14 +965,16 @@ class SMCBacktestEngine:
         reward = abs(tp - entry_price)
         risk_reward = reward / risk if risk > 0 else 0
 
-        if risk_reward < config.target_rr - 0.01:
-            return {"skip": f"RR_{risk_reward:.1f}_BELOW_{config.target_rr}"}
+        effective_min_rr = self._effective_min_rr(smc_analysis.setup_grade, config, profile)
+        if risk_reward < effective_min_rr - 0.01:
+            return {"skip": f"RR_{risk_reward:.1f}_BELOW_{effective_min_rr}"}
 
-        # SL distance check
-        pip_value = self._get_pip_value(instrument)
-        sl_pips = abs(entry_price - sl) / pip_value
-        if sl_pips > config.max_sl_pips:
-            return {"skip": f"SL_{sl_pips:.1f}_PIPS_EXCEEDS_{config.max_sl_pips}"}
+        # Legacy SL distance cap (kept only when SMC v2 parity is disabled).
+        if not config.smc_v2_parity:
+            pip_value = self._get_pip_value(instrument)
+            sl_pips = abs(entry_price - sl) / pip_value
+            if sl_pips > config.max_sl_pips:
+                return {"skip": f"SL_{sl_pips:.1f}_PIPS_EXCEEDS_{config.max_sl_pips}"}
 
         # Get ATR for trailing stop
         atr_value = 0.0

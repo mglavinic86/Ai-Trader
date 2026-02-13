@@ -1,0 +1,19 @@
+Privatni Coaching Program - Lekcija 6
+by LukaFXTrading
+MMXM Modeli
+Market Maker Buy Model
+Market Maker Sell Model
+Swing Projections
+Market Maker Buy Model - MMBM
+Faze MMBM Modela:
+1. Original Consolidation
+2. Accumulation
+3. Re-Accumulation (druga faza akumulacije)
+4. Smart Money Reversal
+Market Maker Sell Model - MMSM
+Faze MMSM Modela:
+1. Original Consolidation
+2. Distribution
+3. Re-Distribution (druga faza distribucije)
+4. Smart Money Reversal
+         Swing Projections

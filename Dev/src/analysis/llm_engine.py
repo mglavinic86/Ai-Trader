@@ -1,5 +1,5 @@
 """
-LLM Engine - Claude integration for market analysis.
+LLM Engine - provider-agnostic integration for market analysis.
 
 This module uses the system prompt + skills + knowledge base
 to produce a natural-language analysis. It is advisory only
@@ -12,6 +12,7 @@ import json
 import os
 from dataclasses import dataclass
 import time
+from contextlib import contextmanager
 from typing import Optional
 
 from src.core.settings_manager import settings_manager
@@ -30,6 +31,12 @@ try:
     ANTHROPIC_AVAILABLE = True
 except Exception:
     ANTHROPIC_AVAILABLE = False
+
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except Exception:
+    OPENAI_AVAILABLE = False
 
 
 @dataclass
@@ -69,36 +76,130 @@ class LLMAnalysis:
 
 
 class LLMEngine:
-    """Claude LLM wrapper for advisory analysis."""
+    """LLM wrapper for advisory analysis."""
 
     def __init__(self):
-        self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        self.api_key = ""
+        self._provider = settings_manager.get_config("ai.provider", "anthropic")
         self._enabled = settings_manager.get_config("ai.use_llm", True)
         self._model = settings_manager.get_config("ai.model", "claude-opus-4-5-20251101")
         self._temperature = settings_manager.get_config("ai.temperature", 0.3)
         self._max_tokens = settings_manager.get_config("ai.max_tokens", 1024)
+        self._use_system_proxy = settings_manager.get_config("ai.use_system_proxy", False)
 
-        if not ANTHROPIC_AVAILABLE:
+        self._refresh_runtime_settings()
+        if self._provider == "anthropic" and not ANTHROPIC_AVAILABLE:
             logger.warning("Anthropic SDK not available - LLM disabled")
+        if self._provider == "openai" and not OPENAI_AVAILABLE:
+            logger.warning("OpenAI SDK not available - LLM disabled")
         if not self.api_key:
-            logger.warning("ANTHROPIC_API_KEY missing - LLM disabled")
+            logger.warning(f"{self._provider.upper()} API key missing - LLM disabled")
+
+    def _refresh_runtime_settings(self) -> None:
+        """Refresh runtime settings from config for long-running processes."""
+        self._provider = str(settings_manager.get_config("ai.provider", "anthropic") or "anthropic").lower()
+        self._enabled = settings_manager.get_config("ai.use_llm", True)
+        default_model = "gpt-4o-mini" if self._provider == "openai" else "claude-opus-4-5-20251101"
+        self._model = settings_manager.get_config("ai.model", default_model)
+        self._temperature = settings_manager.get_config("ai.temperature", 0.3)
+        self._max_tokens = settings_manager.get_config("ai.max_tokens", 1024)
+        self._use_system_proxy = settings_manager.get_config("ai.use_system_proxy", False)
+        self.api_key = os.getenv("OPENAI_API_KEY", "") if self._provider == "openai" else os.getenv("ANTHROPIC_API_KEY", "")
+
+    @contextmanager
+    def _proxy_env_context(self):
+        """
+        Optionally disable system proxy env vars for API requests.
+        Useful when environment injects invalid proxy values.
+        """
+        if self._use_system_proxy:
+            yield
+            return
+
+        proxy_keys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]
+        backup = {k: os.environ.get(k) for k in proxy_keys}
+        try:
+            for key in proxy_keys:
+                os.environ.pop(key, None)
+            yield
+        finally:
+            for key, value in backup.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def is_available(self) -> bool:
-        return ANTHROPIC_AVAILABLE and bool(self.api_key) and bool(self._enabled)
+        self._refresh_runtime_settings()
+        sdk_available = OPENAI_AVAILABLE if self._provider == "openai" else ANTHROPIC_AVAILABLE
+        return sdk_available and bool(self.api_key) and bool(self._enabled)
 
     def status(self) -> tuple[bool, str]:
         """Return (available, reason)."""
+        self._refresh_runtime_settings()
         if not self._enabled:
             return False, "LLM disabled in config"
-        if not ANTHROPIC_AVAILABLE:
+        if self._provider == "openai" and not OPENAI_AVAILABLE:
+            return False, "OpenAI SDK not installed"
+        if self._provider == "anthropic" and not ANTHROPIC_AVAILABLE:
             return False, "Anthropic SDK not installed"
         if not self.api_key:
-            return False, "ANTHROPIC_API_KEY missing"
-        return True, "LLM enabled"
+            return False, f"{self._provider.upper()} API key missing"
+        return True, f"LLM enabled ({self._provider})"
+
+    def _send_request(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
+    ) -> tuple[str, Optional[int], Optional[int]]:
+        """Send request to active provider and return (content, input_tokens, output_tokens)."""
+        if self._provider == "openai":
+            with self._proxy_env_context():
+                client = OpenAI(api_key=self.api_key)
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": user_prompt})
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                content = ""
+                if response and response.choices and response.choices[0].message:
+                    content = response.choices[0].message.content or ""
+                usage = getattr(response, "usage", None)
+                return (
+                    content,
+                    getattr(usage, "prompt_tokens", None) if usage else None,
+                    getattr(usage, "completion_tokens", None) if usage else None,
+                )
+
+        with self._proxy_env_context():
+            client = Anthropic(api_key=self.api_key)
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            content = response.content[0].text if response and response.content else ""
+            usage = getattr(response, "usage", None)
+            return (
+                content,
+                getattr(usage, "input_tokens", None) if usage else None,
+                getattr(usage, "output_tokens", None) if usage else None,
+            )
 
     def simple_analyze(self, prompt: str, max_tokens: int = 500, system_prompt: str = None) -> Optional[str]:
         """
-        Simple text analysis with Claude.
+        Simple text analysis with configured LLM provider.
 
         Args:
             prompt: The text prompt to analyze
@@ -115,15 +216,13 @@ class LLMEngine:
             system_prompt = "You are a financial analyst. Provide concise, structured analysis."
 
         try:
-            client = Anthropic(api_key=self.api_key)
-            message = client.messages.create(
+            content, _, _ = self._send_request(
                 model=self._model,
                 max_tokens=min(max_tokens, self._max_tokens),
                 temperature=0.2,
-                system=system_prompt,
-                messages=[{"role": "user", "content": prompt}],
+                system_prompt=system_prompt,
+                user_prompt=prompt,
             )
-            content = message.content[0].text if message and message.content else ""
             return content.strip() if content else None
         except Exception as e:
             logger.error(f"LLM simple_analyze failed: {e}")
@@ -251,20 +350,14 @@ Context (JSON):
 
         try:
             start = time.perf_counter()
-            client = Anthropic(api_key=self.api_key)
-            message = client.messages.create(
+            content, input_tokens, output_tokens = self._send_request(
                 model=self._model,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
-            usage = getattr(message, "usage", None)
-            input_tokens = getattr(usage, "input_tokens", None) if usage else None
-            output_tokens = getattr(usage, "output_tokens", None) if usage else None
-
-            content = message.content[0].text if message and message.content else ""
             parsed = None
             try:
                 parsed = json.loads(content)
@@ -318,15 +411,13 @@ Context (JSON):
         system_prompt = "You are a trading mentor. Provide concise, actionable lessons in Croatian."
 
         try:
-            client = Anthropic(api_key=self.api_key)
-            message = client.messages.create(
+            content, _, _ = self._send_request(
                 model=self._model,
                 max_tokens=min(self._max_tokens, 800),
                 temperature=0.2,
-                system=system_prompt,
-                messages=[{"role": "user", "content": prompt}],
+                system_prompt=system_prompt,
+                user_prompt=prompt,
             )
-            content = message.content[0].text if message and message.content else ""
             return content.strip() if content else None
         except Exception as e:
             logger.error(f"LLM lesson generation failed: {e}")
@@ -334,9 +425,9 @@ Context (JSON):
 
     def validate_signal(self, signal_data: dict) -> Optional["SignalValidation"]:
         """
-        Validate a trading signal using Claude AI.
+        Validate a trading signal using configured AI provider.
 
-        This is the core AI validation layer - Claude decides whether
+        This is the core AI validation layer - AI decides whether
         to approve or reject each trade signal.
 
         Args:
@@ -413,21 +504,23 @@ Respond with ONLY valid JSON:
 
         try:
             start = time.perf_counter()
-            client = Anthropic(api_key=self.api_key)
-
             # Use faster model for validation (Haiku) if available, else default
-            validation_model = settings_manager.get_config("ai.validation_model", "claude-sonnet-4-20250514")
+            default_validation_model = "gpt-4o-mini" if self._provider == "openai" else "claude-sonnet-4-20250514"
+            validation_model = settings_manager.get_config("ai.validation_model", default_validation_model)
 
-            message = client.messages.create(
+            content, input_tokens, output_tokens = self._send_request(
                 model=validation_model,
                 max_tokens=200,  # Short response needed
                 temperature=0.1,  # More deterministic
-                messages=[{"role": "user", "content": prompt}],
+                user_prompt=prompt,
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
 
-            content = message.content[0].text if message and message.content else ""
-            logger.info(f"AI Validation response ({latency_ms}ms): {content[:100]}")
+            compact_raw = " ".join(str(content).split())
+            logger.info(
+                f"AI_LAYER | VALIDATION_RAW | model={validation_model} latency_ms={latency_ms} "
+                f"response=\"{compact_raw[:300]}\""
+            )
 
             # Parse JSON response
             try:
@@ -445,17 +538,22 @@ Respond with ONLY valid JSON:
                 else:
                     parsed = {"decision": "REJECT", "reasoning": content[:100], "confidence_adjustment": 0}
 
-            usage = getattr(message, "usage", None)
-
-            return SignalValidation(
+            validation = SignalValidation(
                 decision=parsed.get("decision", "REJECT").upper(),
                 reasoning=parsed.get("reasoning", "No reasoning provided"),
                 confidence_adjustment=int(parsed.get("confidence_adjustment", 0)),
                 model=validation_model,
                 latency_ms=latency_ms,
-                input_tokens=getattr(usage, "input_tokens", None) if usage else None,
-                output_tokens=getattr(usage, "output_tokens", None) if usage else None,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
+            compact_reasoning = " ".join(str(validation.reasoning).split())
+            logger.info(
+                f"AI_LAYER | VALIDATION_PARSED | decision={validation.decision} model={validation.model} "
+                f"latency_ms={validation.latency_ms} conf_adj={validation.confidence_adjustment} "
+                f"reasoning=\"{compact_reasoning}\""
+            )
+            return validation
 
         except Exception as e:
             logger.error(f"AI signal validation failed: {e}")

@@ -1,0 +1,4 @@
+date,instrument,scans,signals,trades,a_plus_count,a_count,pre_executor_count,blocked_sl_cap,blocked_htf_poi,blocked_killzone,blocked_no_choch_bos,pnl_day,max_dd_day,top_block_reasons,notes
+2026-02-10,EUR_USD,,,,,,,,,,,,,,
+2026-02-10,GBP_USD,,,,,,,,,,,,,,
+2026-02-10,XAU_USD,,,,,,,,,,,,,,

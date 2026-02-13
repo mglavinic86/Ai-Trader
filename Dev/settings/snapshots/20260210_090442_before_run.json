@@ -1,0 +1,238 @@
+{
+  "timestamp": "2026-02-10T08:04:42.266760+00:00",
+  "label": "before_run",
+  "auto_trading": {
+    "enabled": false,
+    "mode": "scalping",
+    "scan_interval_seconds": 60,
+    "instruments": [
+      "EUR_USD",
+      "GBP_USD",
+      "XAU_USD"
+    ],
+    "risk_per_trade_percent": 0.3,
+    "max_daily_drawdown_percent": 3.0,
+    "max_weekly_drawdown_percent": 6.0,
+    "max_concurrent_positions": 5,
+    "min_confidence_threshold": 75,
+    "max_daily_trades": 3,
+    "max_trades_per_instrument": 1,
+    "stop_day": {
+      "enabled": true,
+      "loss_trigger": 2,
+      "reset_hour_utc": 0
+    },
+    "cooldown": {
+      "loss_streak_trigger": 2,
+      "cooldown_minutes": 60,
+      "reset_on_win": true
+    },
+    "scalping": {
+      "max_sl_pips": 15.0,
+      "target_rr": 2.5,
+      "max_hold_minutes": 120,
+      "preferred_sessions": [
+        "london",
+        "newyork"
+      ],
+      "avoid_news_minutes": 30,
+      "min_atr_pips": 5.0,
+      "max_spread_pips": 2.0
+    },
+    "learning_mode": {
+      "enabled": true,
+      "target_trades": 30,
+      "current_trades": 0,
+      "auto_graduate": true,
+      "aggressive_settings": {
+        "min_confidence_threshold": 60,
+        "loss_streak_trigger": 2,
+        "cooldown_minutes": 30,
+        "max_daily_trades": 2,
+        "max_trades_per_instrument": 1
+      },
+      "production_settings": {
+        "min_confidence_threshold": 75,
+        "loss_streak_trigger": 2,
+        "cooldown_minutes": 60,
+        "max_daily_trades": 2,
+        "max_trades_per_instrument": 1
+      }
+    },
+    "ai_validation": {
+      "enabled": true,
+      "reject_on_failure": true,
+      "timeout_seconds": 10,
+      "skip_in_learning_mode": false
+    },
+    "ai_override": {
+      "enabled": false,
+      "min_ai_confidence": 65,
+      "max_overrides_per_day": 5,
+      "cooldown_after_loss_minutes": 60,
+      "adjustable_settings": {
+        "max_spread_pips": {
+          "min": 1.5,
+          "max": 3.5
+        },
+        "min_atr_pips": {
+          "min": 2.0,
+          "max": 5.0
+        },
+        "target_rr": {
+          "min": 2.5,
+          "max": 4.0
+        },
+        "min_confidence_threshold": {
+          "min": 60,
+          "max": 80
+        }
+      },
+      "learning": {
+        "track_outcomes": true,
+        "disable_setting_after_losses": 3
+      }
+    },
+    "market_regime": {
+      "enabled": true,
+      "block_low_volatility": true,
+      "block_volatile": true,
+      "trending_only_with_trend": true,
+      "ranging_require_sr": true,
+      "min_regime_strength": 60,
+      "adx_trending_threshold": 25.0,
+      "adx_ranging_threshold": 20.0,
+      "bb_squeeze_percentile": 20.0,
+      "bb_expansion_percentile": 80.0
+    },
+    "external_sentiment": {
+      "enabled": true,
+      "news_provider_enabled": true,
+      "vix_provider_enabled": true,
+      "calendar_provider_enabled": true,
+      "cache_ttl_minutes": 30,
+      "weights": {
+        "price_action": 0.3,
+        "news_claude": 0.35,
+        "vix": 0.15,
+        "calendar": 0.2
+      }
+    },
+    "self_upgrade": {
+      "enabled": true,
+      "analysis_interval_hours": 24,
+      "min_trades_for_analysis": 20,
+      "max_proposals_per_cycle": 3,
+      "min_robustness_score": 60,
+      "auto_rollback_threshold": {
+        "win_rate_drop": 0.1,
+        "consecutive_losses": 5,
+        "max_block_rate": 50.0
+      }
+    },
+    "limit_entry": {
+      "enabled": true,
+      "midpoint_entry": true,
+      "allow_market_fallback": false,
+      "expiry_minutes": 60,
+      "max_pending_per_instrument": 1
+    },
+    "smart_interval": {
+      "enabled": true,
+      "base_interval_seconds": 60,
+      "min_interval_seconds": 30,
+      "max_interval_seconds": 120,
+      "news_blocking_interval": 120,
+      "active_market_interval": 30,
+      "quiet_market_interval": 90,
+      "quiet_threshold_scans": 5
+    },
+    "smc_v2": {
+      "enabled": true,
+      "shadow_mode": true,
+      "grade_execution": {
+        "enabled": true,
+        "a_plus_only_live": false,
+        "min_confidence_a_plus": 45,
+        "min_confidence_a": 58
+      },
+      "strict_sweep": {
+        "enabled": false
+      },
+      "strict_fvg": {
+        "enabled": false
+      },
+      "htf_poi_gate": {
+        "enabled": true
+      },
+      "killzone_gate": {
+        "enabled": true
+      },
+      "news_gate": {
+        "enabled": false,
+        "block_minutes": 15
+      },
+      "risk": {
+        "min_rr": {
+          "A+": 3.0,
+          "A": 2.5,
+          "B": 2.0
+        },
+        "fx_sl_caps": {
+          "min_pips": 4.0,
+          "max_pips": 18.0
+        },
+        "xau_sl_caps": {
+          "min_points": 120,
+          "max_points": 600
+        }
+      }
+    },
+    "dry_run": true,
+    "explain_decisions": true
+  },
+  "settings_config": {
+    "interface": {
+      "name": "AI Trader",
+      "version": "1.0.0",
+      "language": "hr",
+      "theme": "dark",
+      "show_timestamps": true,
+      "confirm_trades": true
+    },
+    "ai": {
+      "provider": "openai",
+      "use_system_proxy": false,
+      "model": "gpt-4o",
+      "validation_model": "gpt-4o",
+      "temperature": 0.3,
+      "max_tokens": 4096,
+      "use_adversarial": true,
+      "use_rag": true,
+      "use_sentiment": true
+    },
+    "analysis": {
+      "default_timeframe": "M15",
+      "indicators": [
+        "EMA20",
+        "EMA50",
+        "RSI14",
+        "ATR14"
+      ],
+      "min_rr_ratio": 2.0,
+      "lookback_candles": 100
+    },
+    "notifications": {
+      "sound_on_signal": false,
+      "log_all_analysis": true
+    },
+    "skills": {
+      "enabled": [
+        "technical_analysis",
+        "adversarial_thinking",
+        "risk_management"
+      ],
+      "custom": []
+    }
+  }
+}

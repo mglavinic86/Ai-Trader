@@ -25,6 +25,7 @@ prompt-toolkit>=3.0.43
 
 # Anthropic API (for AI features)
 anthropic>=0.40.0
+openai>=1.50.0
 
 # Web Dashboard
 streamlit>=1.32.0
